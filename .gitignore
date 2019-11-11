@@ -113,8 +113,15 @@ data
 # custom
 *.pkl
 *.pkl.json
+*.pkl.segm.json
+*.pkl.bbox.json
 *.log.json
 work_dirs/
+img/
+*result/
+*result_new/
+ap_ar/
+
 
 # Pytorch
 *.pth
