@@ -43,8 +43,12 @@ class Transform_PKL():
             id = image["id"]
             img_path = os.path.join(self.root,img_name)
             img = cv2.imread(img_path)
-            img_show, bboxes, labels, contours = self.transform_pkl(img, self.result[index])
-
+            try:
+                img_show, bboxes, labels, contours = self.transform_pkl(img, self.result[index])
+            except:
+                pass
+                #import pdb
+                #pdb.set_trace()
             # name, class, bboxes
             for i in range(len(bboxes)):
                 box = bboxes[i]
@@ -175,11 +179,12 @@ if __name__ == "__main__":
     root = "/home/zhongying/other/walkgis/mmdetection/zy/htc_new_set/"
     # pkl_file = os.path.join(root,"2019_10_23/result.pkl")
     # output_root = os.path.join(root,"2019_10_23/result")
-    pkl_file = os.path.join(root,"2019_10_27/xihu_result.pkl")
-    output_root = os.path.join(root,"2019_10_27/xihu_result")
+    pkl_file = os.path.join(root,"2019_11_11/cn_result.pkl")
+    output_root = os.path.join(root,"2019_11_11/cn_result")
 
     data_root =  "/home/zhongying/dataset/"
-    json_file = os.path.join(data_root,'WalkTrainData/correct_xihu_instance.json')
+    json_file = os.path.join(data_root,'WalkTrainData/correct_cn_instance.json')
+    #json_file = os.path.join(data_root,'WalkValidationData/correct_validation_instance.json')
 
     # img_root = "E:/work/Walk/try/super_mini"
     transform = Transform_PKL(pkl_file, json_file,output_root, data_root,single_img=False, show=False)
