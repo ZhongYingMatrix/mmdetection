@@ -103,7 +103,12 @@ class PolarTargetOffline(object):
 
 
         for mask in gt_masks:
-            cnt, contour = self.get_single_centerpoint(mask)
+            '''debug IndexError: list index out of range'''
+            try:
+                cnt, contour = self.get_single_centerpoint(mask)
+            except:
+                cnt, contour = [1.,1.], [ [[0.,0.]],[[0.,2.]],[[2.,2.]],[[2.,0.]] ]
+
             contour = contour[0]
             contour = torch.Tensor(contour).float()
             y, x = cnt
