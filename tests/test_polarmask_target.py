@@ -10,6 +10,7 @@ from mmdet.apis import (get_root_logger, init_dist, set_random_seed,
                         train_detector)
 from mmdet.datasets import build_dataset
 from mmdet.models import build_detector
+from mmdet.datasets import DATASETS, build_dataloader
 
 from tqdm import tqdm
 
@@ -32,15 +33,38 @@ def main():
     distributed = False
     datasets = [build_dataset(cfg.data.train)]
     error_indexs = []
+    import pdb
+    pdb.set_trace()
     for i in tqdm(range(len(datasets[0]))):
         try:
             _ = datasets[0][i]
         except:
             error_indexs.append(i)
 
-    import pdb
-    pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
 
+def dataloader_test():
+    args = parse_args()
+
+    cfg = Config.fromfile(args.config)
+    # set cudnn_benchmark
+    if cfg.get('cudnn_benchmark', False):
+        torch.backends.cudnn.benchmark = True
+    distributed = False
+    datasets = [build_dataset(cfg.data.train)]
+    data_loaders = [
+        build_dataloader(
+            ds,
+            cfg.data.imgs_per_gpu,
+            cfg.data.workers_per_gpu,
+            1,
+            dist=False) for ds in datasets
+    ]
+    for data in data_loaders[0]:
+        import pdb
+        pdb.set_trace()
 
 if __name__ == "__main__":
-    main()
+    #main()
+    dataloader_test()

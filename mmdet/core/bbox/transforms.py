@@ -1,6 +1,8 @@
 import mmcv
 import numpy as np
 import torch
+import cv2
+import pycocotools.mask as mask_util
 
 
 def bbox2delta(proposals, gt, means=[0, 0, 0, 0], stds=[1, 1, 1, 1]):
