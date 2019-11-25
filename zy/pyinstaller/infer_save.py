@@ -8,18 +8,6 @@ from pycocotools.coco import COCO
 import cv2
 import json
 
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        else:
-            return super(NpEncoder, self).default(obj)
-
-
 def detect_img(model, file_path):
     img = mmcv.imread(file_path)
     result = inference_detector(model, img)
@@ -76,30 +64,25 @@ def detect_img(model, file_path):
     return content
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='crop augmentation, save in walkgis form')
-    parser.add_argument('--config', help='test config file path',
-                        default='/home/zhongying/other/walkgis/mmdetection/zy/htc_new_set/2019_11_13/test_htc_dconv_c5_r101_fpn_sbn_20e_total.py')
-    parser.add_argument('--checkpoint', help='checkpoint file',
-                        default='/home/zhongying/other/walkgis/mmdetection/zy/htc_new_set/2019_11_13/epoch_100.pth')
-    parser.add_argument('--root', help='output root', default='/home/zhongying/other/walkgis/mmdetection/zy/crop_res/val_result_1113/')
-    parser.add_argument('--ann', help='annotation file', default='/home/zhongying/dataset/WalkValidationData/validation_instance.json')
+    parser = argparse.ArgumentParser(description='infer and save for pyinstaller')
+    # parser.add_argument('--config', help='test config file path',
+    #                     default='/home/zhongying/other/walkgis/mmdetection/zy/htc_new_set/2019_11_13/test_htc_dconv_c5_r101_fpn_sbn_20e_total.py')
+    # parser.add_argument('--checkpoint', help='checkpoint file',
+    #                     default='/home/zhongying/other/walkgis/mmdetection/zy/htc_new_set/2019_11_13/epoch_100.pth')
+    # parser.add_argument('--root', help='output root', default='/home/zhongying/other/walkgis/mmdetection/zy/crop_res/val_result_1113/')
+    # parser.add_argument('--ann', help='annotation file', default='/home/zhongying/dataset/WalkValidationData/validation_instance.json')
+    parser.add_argument('--cuda', help='use gpu or not', default=False)
+    parser.add_argument('--img', help='img path', default='./test.tif')
     args = parser.parse_args()
     return args
-    
+
 def main():
     args = parse_args()
-    model = init_detector(args.config, args.checkpoint, device='cuda:0')
-    coco = COCO(args.ann)
-    file_lst = [info['file_name'] for info in coco.loadImgs(coco.getImgIds())]
-    for f in file_lst:
-        file_name = f.split('/')[-1].split('.')[0]
-        file_path = '/home/zhongying/dataset/' + f
-        print('processing',file_name)
-        content = detect_img(model, file_path)
-        # import pdb
-        # pdb.set_trace()
-        with open(args.root+file_name+'.json', 'w') as f:
-            json.dump(content, f, indent=4, cls=NpEncoder)
+    model = init_detector('./test_htc_dconv_c5_r101_fpn_sbn_20e_total.py', './epoch_100.pth', device="cuda:0" if args.cuda else "cpu")
+    content = detect_img(model, args.img)
+
+    import pdb
+    pdb.set_trace()
 
 if __name__ == "__main__":
     main()

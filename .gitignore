@@ -121,6 +121,7 @@ img/
 *result/
 *result_new/
 ap_ar/
+crop_res/
 
 
 # Pytorch
