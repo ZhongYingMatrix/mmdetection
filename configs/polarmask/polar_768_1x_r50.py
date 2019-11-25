@@ -54,7 +54,7 @@ test_cfg = dict(
     nms=dict(type='nms', iou_thr=0.5),
     max_per_img=100)
 # dataset settings
-dataset_type = 'CocoDataset'
+dataset_type = 'Coco_polarmask_Dataset'
 data_root = 'data/coco/'
 img_norm_cfg = dict(
     mean=[102.9801, 115.9465, 122.7717], std=[1.0, 1.0, 1.0], to_rgb=False)
@@ -111,7 +111,7 @@ optimizer = dict(
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
-optimizer_config = dict(grad_clip=None)
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='step',

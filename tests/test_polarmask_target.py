@@ -53,17 +53,19 @@ def dataloader_test():
         torch.backends.cudnn.benchmark = True
     distributed = False
     datasets = [build_dataset(cfg.data.train)]
-    data_loaders = [
-        build_dataloader(
-            ds,
-            cfg.data.imgs_per_gpu,
-            cfg.data.workers_per_gpu,
-            1,
-            dist=False) for ds in datasets
-    ]
-    for data in data_loaders[0]:
-        import pdb
-        pdb.set_trace()
+    data = datasets[0][40]
+    import pdb
+    pdb.set_trace()
+    # data_loaders = [
+    #     build_dataloader(
+    #         ds,
+    #         cfg.data.imgs_per_gpu,
+    #         cfg.data.workers_per_gpu,
+    #         1,
+    #         dist=False) for ds in datasets
+    # ]
+    # for data in data_loaders[0]:
+    #     pass
 
 if __name__ == "__main__":
     #main()

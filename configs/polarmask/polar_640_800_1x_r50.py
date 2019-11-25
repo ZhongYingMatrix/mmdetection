@@ -20,7 +20,7 @@ model = dict(
         num_outs=5,
         relu_before_extra_convs=True),
     bbox_head=dict(
-        type='PolarMask_Head_v2',
+        type='PolarMask_Head',
         num_classes=81,
         in_channels=256,
         stacked_convs=4,
@@ -54,18 +54,18 @@ test_cfg = dict(
     nms=dict(type='nms', iou_thr=0.5),
     max_per_img=100)
 # dataset settings
-dataset_type = 'CocoDataset'
+dataset_type = 'Coco_polarmask_Dataset'
 data_root = 'data/coco/'
 img_norm_cfg = dict(
     mean=[102.9801, 115.9465, 122.7717], std=[1.0, 1.0, 1.0], to_rgb=False)
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
-    dict(type='Resize', img_scale=(1280, 768), keep_ratio=True),
+    dict(type='Resize', img_scale=[(1333, 640), (1333, 800)], keep_ratio=True), 
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=128),
-    dict(type='PolarTargetOffline_v2'),# offline ray label generation
+    dict(type='PolarTargetOffline'),# offline ray label generation
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks',
     '_gt_bboxes', '_gt_labels', '_gt_masks']),
@@ -75,7 +75,7 @@ test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
         type='MultiScaleFlipAug',
-        img_scale=(1280, 768),
+        img_scale=(1333, 800),
         flip=False,
         transforms=[
             dict(type='Resize', keep_ratio=True),
@@ -111,7 +111,7 @@ optimizer = dict(
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
-optimizer_config = dict(grad_clip=None)
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='step',
@@ -133,7 +133,7 @@ total_epochs = 12
 device_ids = range(4)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/polar_1x_r50_no_fix_shape'
+work_dir = './work_dirs/polar_640_800_1x_r50'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]

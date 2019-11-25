@@ -8,10 +8,11 @@ from .registry import DATASETS
 from .voc import VOCDataset
 from .wider_face import WIDERFaceDataset
 from .xml_style import XMLDataset
+from .coco_rm_small_for_polarmask import Coco_polarmask_Dataset
 
 __all__ = [
     'CustomDataset', 'XMLDataset', 'CocoDataset', 'VOCDataset',
     'CityscapesDataset', 'GroupSampler', 'DistributedGroupSampler',
     'build_dataloader', 'ConcatDataset', 'RepeatDataset', 'WIDERFaceDataset',
-    'DATASETS', 'build_dataset'
+    'DATASETS', 'build_dataset', 'Coco_polarmask_Dataset'
 ]
