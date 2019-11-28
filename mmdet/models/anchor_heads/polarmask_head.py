@@ -221,7 +221,8 @@ class PolarMask_Head(nn.Module):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
-
+        import pdb
+        pdb.set_trace()
         labels, bbox_targets, mask_targets = self.polar_target(all_level_points, extra_data)
 
         num_imgs = cls_scores[0].size(0)

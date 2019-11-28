@@ -18,7 +18,7 @@ import multiprocessing as mp
 from multiprocessing import Process, Manager
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Debug polarmask target in pipeline')
+    parser = argparse.ArgumentParser(description='Debug dataset')
     parser.add_argument('config', help='train config file path')
     args = parser.parse_args()
     return args

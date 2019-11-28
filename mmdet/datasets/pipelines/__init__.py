@@ -7,11 +7,13 @@ from .transforms import (Albu, Expand, MinIoURandomCrop, Normalize, Pad,
                          PhotoMetricDistortion, RandomCrop, RandomFlip, Resize,
                          SegResizeFlipPadRescale)
 from .polarmask_target import PolarTargetOffline
+from .papmask_target import PAPTargetOffline
 
 __all__ = [
     'Compose', 'to_tensor', 'ToTensor', 'ImageToTensor', 'ToDataContainer',
     'Transpose', 'Collect', 'LoadAnnotations', 'LoadImageFromFile',
     'LoadProposals', 'MultiScaleFlipAug', 'Resize', 'RandomFlip', 'Pad',
     'RandomCrop', 'Normalize', 'SegResizeFlipPadRescale', 'MinIoURandomCrop',
-    'Expand', 'PhotoMetricDistortion', 'Albu', 'PolarTargetOffline'
+    'Expand', 'PhotoMetricDistortion', 'Albu', 'PolarTargetOffline',
+    'PAPTargetOffline'
 ]
