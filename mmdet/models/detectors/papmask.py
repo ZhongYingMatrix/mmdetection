@@ -4,6 +4,7 @@ import torch.nn as nn
 from mmdet.core import bbox_mask2result
 from ..registry import DETECTORS
 from .. import builder
+from mmdet.utils import Timer
 
 @DETECTORS.register_module
 class PAPMask(SingleStageDetector):
@@ -52,12 +53,20 @@ class PAPMask(SingleStageDetector):
         else:
             extra_data = None
 
+        with Timer() as t:
+            x = self.extract_feat(img)
+        print("extract feature takes %s s"%t.secs) # 0.2
 
-        x = self.extract_feat(img)
-        outs = self.mask_head(x)
+        with Timer() as t:
+            outs = self.mask_head(x)
+        print("mask head takes %s s"%t.secs) # 0.2
+
         loss_inputs = outs + (gt_masks, extra_data, img_metas, self.train_cfg)
+        
+        with Timer() as t:
+            losses = self.mask_head.loss(*loss_inputs)
+        print("compute losses takes %s s"%t.secs) #0.8
 
-        losses = self.mask_head.loss(*loss_inputs)
         return losses
 
     def simple_test(self, img, img_meta, rescale=False):

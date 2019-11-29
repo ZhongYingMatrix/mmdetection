@@ -39,10 +39,10 @@ model = dict(
         loss_polarcontour=dict(type='MaskIOULoss'),
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        # loss_mask=dict(
-        #     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
         loss_mask=dict(
-            type='CrossEntropyLoss', loss_weight=1.0),
+            type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+        # loss_mask=dict(
+        #     type='CrossEntropyLoss', loss_weight=1.0),
         conv_cfg=None,
         norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),    
             ))
@@ -93,7 +93,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=5,
+    workers_per_gpu=0,#5,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',

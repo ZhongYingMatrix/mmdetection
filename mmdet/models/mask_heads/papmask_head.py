@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import math
 import time
+from mmdet.utils import Timer
 
 INF = 1e8
 
@@ -166,20 +167,11 @@ class PAPMask_Head(nn.Module):
         assert len(cls_scores) == len(centernesses) == len(polarcontours) == len(coefficients)
         prototypes = prototypes[0]
 
-        # TODO
-        # (1024, 1024) 
-        # cls_scores[0] = torch.Size([4, 80, 128, 128]) 
-        # centernesses[0] = torch.Size([4, 1, 128, 128])
-        # polarcontours[0] = torch.Size([4, 36, 128, 128])
-        # coefficients[0] = torch.Size([4, 16, 128, 128])
-        # prototypes[0] = torch.Size([4, 16, 256, 256])
-        # gt_masks = [(num_mask, 1024, 1024)] * 4
-        # extra_data['_gt_labels'] = [torch(21824)] * 4 & ids
-        # extra_data['_gt_polarcontours'] = [(21824, 36)]*4
+        # TODO prepare target and loss mask take too much time
 
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, polarcontours[0].dtype,
-                                           polarcontours[0].device)
+                                        polarcontours[0].device)
         gt_labels, gt_ids, gt_polarcontours = self.polar_target(all_level_points, extra_data)
 
         mask_cnt, which_img = 1, {}
