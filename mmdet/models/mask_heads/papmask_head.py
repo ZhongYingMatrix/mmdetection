@@ -180,7 +180,111 @@ class PAPMask_Head(nn.Module):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, polarcontours[0].dtype,
                                            polarcontours[0].device)
-        
+        gt_labels, gt_ids, gt_polarcontours = self.polar_target(all_level_points, extra_data)
+
+        mask_cnt, which_img = 1, {}
+        for img_num, _gt_masks in enumerate(gt_masks):
+            num = _gt_masks.shape[0]
+            for i in range(mask_cnt, mask_cnt+num):
+                which_img[i] = img_num
+            mask_cnt = mask_cnt + num
+        gt_masks = np.concatenate(gt_masks)
+        gt_masks = [cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks]
+        gt_masks = [torch.from_numpy(gt_mask).to(polarcontours[0].device) 
+                    for gt_mask in gt_masks]      
+
+        num_imgs = cls_scores[0].size(0)
+        flatten_cls_scores = [
+            cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
+            for cls_score in cls_scores]
+        flatten_centernesses = [
+            centerness.permute(0, 2, 3, 1).reshape(-1)
+            for centerness in centernesses
+        ]
+        flatten_polarcontours = [
+            polarcontour.permute(0, 2, 3, 1).reshape(-1, 36)
+            for polarcontour in polarcontours
+        ]
+        flatten_coefficients = [
+            coefficient.permute(0, 2, 3, 1).reshape(-1, self.coefficient_channels)
+            for coefficient in coefficients
+        ]
+        flatten_cls_scores = torch.cat(flatten_cls_scores)  
+        flatten_centernesses = torch.cat(flatten_centernesses)  
+        flatten_polarcontours = torch.cat(flatten_polarcontours)  
+        flatten_coefficients = torch.cat(flatten_coefficients)  
+
+        flatten_gt_labels = torch.cat(gt_labels).long()  
+        flatten_gt_ids = torch.cat(gt_ids)  
+        flatten_gt_polarcontours = torch.cat(gt_polarcontours)  
+        flatten_points = torch.cat([points.repeat(num_imgs, 1)
+                                    for points in all_level_points])  
+        pos_inds = flatten_gt_labels.nonzero().reshape(-1)
+        num_pos = len(pos_inds)
+
+        loss_cls = self.loss_cls(
+            flatten_cls_scores, flatten_gt_labels,
+            avg_factor=num_pos + num_imgs)
+        pos_centernesses = flatten_centernesses[pos_inds]
+        pos_polarcontours = flatten_polarcontours[pos_inds]
+        pos_coefficients = flatten_coefficients[pos_inds]
+
+        if num_pos > 0:
+            pos_gt_polarcontours = flatten_gt_polarcontours[pos_inds]
+            pos_gt_centernesses = self.polar_centerness_target(pos_gt_polarcontours)
+
+            pos_points = flatten_points[pos_inds]
+
+            # centerness weighted iou loss
+            loss_polarcontour = self.loss_polarcontour(pos_polarcontours,
+                                       pos_gt_polarcontours,
+                                       weight=pos_gt_centernesses,
+                                       avg_factor=pos_gt_centernesses.sum())
+
+            loss_centerness = self.loss_centerness(pos_centernesses,
+                                                   pos_gt_centernesses)
+
+            # prototype mask loss
+            pos_gt_ids = flatten_gt_ids[pos_inds]
+
+            pos_contour_x = pos_polarcontours*self.angles.cos() + \
+                pos_points[:,0].reshape(-1,1).repeat(1,36)
+            pos_contour_y = pos_polarcontours*self.angles.sin() + \
+                pos_points[:,1].reshape(-1,1).repeat(1,36)
+
+            loss_mask = []
+            for i in range(len(pos_gt_ids)):
+                gt_mask = gt_masks[pos_gt_ids[i].int()-1]
+                xs, ys = pos_contour_x[i].detach()/4, pos_contour_y[i].detach()/4
+                contour = torch.stack((xs,ys),1).cpu().numpy()[None,...].astype(int)
+                contour_range = cv2.drawContours(np.zeros(gt_mask.shape), contour, -1,1,-1)
+
+                mask_id = int(pos_gt_ids[i])
+                one_img_prototypes = prototypes[which_img[mask_id]]
+                one_img_coefficients = pos_coefficients[i][...,None,None].repeat(1, 
+                    gt_mask.shape[0], gt_mask.shape[0])
+                pred_prototype = (one_img_coefficients*one_img_prototypes).sum(0)
+                # outside contour fill with -5, will it work? TODO
+                pred_mask = torch.from_numpy(-5*(1-contour_range)).to(pred_prototype.device) \
+                    + pred_prototype * torch.from_numpy(contour_range).to(pred_prototype.device)
+                pred_mask, gt_mask = self.get_minimal_crop(pred_mask, gt_mask)
+                loss_mask.append(
+                    self.loss_mask(pred_mask[None,None,...], gt_mask[None,...].float(), [0])
+                    )
+            loss_mask = sum(loss_mask)/len(loss_mask)
+
+        else:
+            loss_polarcontour = pos_polarcontours.sum()
+            loss_centerness = pos_centernesses.sum()
+            loss_mask = 0
+            import pdb
+            pdb.set_trace()
+
+        return dict(
+            loss_cls=loss_cls,
+            loss_polarcontour=loss_polarcontour,
+            loss_centerness=loss_centerness,
+            loss_mask=loss_mask)
 
 
 
@@ -196,7 +300,8 @@ class PAPMask_Head(nn.Module):
 
 
 
-        
+
+
 
 
     def get_points(self, featmap_sizes, dtype, device):
@@ -225,6 +330,64 @@ class PAPMask_Head(nn.Module):
         points = torch.stack(
             (x.reshape(-1), y.reshape(-1)), dim=-1) + stride // 2
         return points
+
+    def polar_target(self, points, extra_data):
+        assert len(points) == len(self.regress_ranges)
+
+        num_levels = len(points)
+
+        labels_list, ids_list, polarcontours_list = extra_data.values()
+        # accumulate ids
+        for img_id in range(1, len(ids_list)):
+            ids_list[img_id] += ids_list[img_id-1].max()
+
+        # split to per img, per level
+        num_points = [center.size(0) for center in points]
+        labels_list = [labels.split(num_points, 0) for labels in labels_list]
+        ids_list = [
+            ids.split(num_points, 0)
+            for ids in ids_list
+        ]
+        polarcontours_list = [
+            polarcontours.split(num_points, 0)
+            for polarcontours in polarcontours_list
+        ]
+
+        # concat per level image
+        concat_lvl_labels = []
+        concat_lvl_ids = []
+        concat_lvl_polarcontours = []
+        for i in range(num_levels):
+            concat_lvl_labels.append(
+                torch.cat([labels[i] for labels in labels_list]))
+            concat_lvl_ids.append(
+                torch.cat(
+                    [ids[i] for ids in ids_list]))
+            concat_lvl_polarcontours.append(
+                torch.cat(
+                    [polarcontours[i] for polarcontours in polarcontours_list]))
+
+        return concat_lvl_labels, concat_lvl_ids, concat_lvl_polarcontours
+
+    def polar_centerness_target(self, pos_gt_polarcontours):
+        # only calculate pos centerness targets, otherwise there may be nan
+        gt_centernesses = (pos_gt_polarcontours.min(dim=-1)[0] / pos_gt_polarcontours.max(dim=-1)[0])
+        return torch.sqrt(gt_centernesses)
+
+    def get_minimal_crop(self, pred_mask, gt_mask):
+        left, up, right, bottom = 1e10, 1e10, -1, -1
+        for mask in (pred_mask, gt_mask):
+            if mask.max() <= 0:
+                continue
+            pos_xs, pos_ys = torch.where(mask>0)
+            left = min(pos_xs.min(), left)
+            up = min(pos_ys.min(), up)
+            right = max(pos_xs.max(), right)
+            bottom = max(pos_ys.max(), bottom)
+        assert left<=right and up<=bottom
+        return pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
+
+
 
 
 

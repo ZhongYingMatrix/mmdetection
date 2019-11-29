@@ -26,7 +26,7 @@ class PAPTargetOffline(object):
                              torch.from_numpy(gt_masks.sum(-1).sum(-1)>15)
         gt_bboxes = gt_bboxes[small_objects_mask]
         gt_labels = gt_labels[small_objects_mask]
-        gt_masks = gt_masks[small_objects_mask]
+        gt_masks = gt_masks[small_objects_mask.tolist()]
         results['gt_bboxes'] = gt_bboxes.numpy()
         results['gt_labels'] = gt_labels.numpy().astype(np.int64)
         results['gt_masks'] = gt_masks

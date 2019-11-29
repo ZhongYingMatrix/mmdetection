@@ -57,9 +57,6 @@ class PAPMask(SingleStageDetector):
         outs = self.mask_head(x)
         loss_inputs = outs + (gt_masks, extra_data, img_metas, self.train_cfg)
 
-        import pdb
-        pdb.set_trace()
-
         losses = self.mask_head.loss(*loss_inputs)
         return losses
 

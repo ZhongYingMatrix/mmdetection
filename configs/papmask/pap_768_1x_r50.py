@@ -39,8 +39,10 @@ model = dict(
         loss_polarcontour=dict(type='MaskIOULoss'),
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        # loss_mask=dict(
+        #     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
         loss_mask=dict(
-            type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+            type='CrossEntropyLoss', loss_weight=1.0),
         conv_cfg=None,
         norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),    
             ))
@@ -91,7 +93,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=0,#5, DEBUG
+    workers_per_gpu=5,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
@@ -136,7 +138,7 @@ total_epochs = 12
 device_ids = range(4)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/polar_768_1x_r50'
+work_dir = './work_dirs/pap_768_1x_r50'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
