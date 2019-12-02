@@ -88,7 +88,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=0,#5, DEBUG
+    workers_per_gpu=5, 
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',

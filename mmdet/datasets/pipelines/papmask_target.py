@@ -24,12 +24,12 @@ class PAPTargetOffline(object):
         small_objects_mask = (gt_bboxes[:,2]-gt_bboxes[:,0]>10) & \
                              (gt_bboxes[:,3]-gt_bboxes[:,1]>10) & \
                              torch.from_numpy(gt_masks.sum(-1).sum(-1)>15)
-        gt_bboxes = gt_bboxes[small_objects_mask]
-        gt_labels = gt_labels[small_objects_mask]
+        gt_bboxes = gt_bboxes[small_objects_mask.tolist()]
+        gt_labels = gt_labels[small_objects_mask.tolist()]
         gt_masks = gt_masks[small_objects_mask.tolist()]
         results['gt_bboxes'] = gt_bboxes.numpy()
         results['gt_labels'] = gt_labels.numpy().astype(np.int64)
-        results['gt_masks'] = gt_masks
+        
 
         featmap_sizes = self.get_featmap_size(results['pad_shape'])
         self.featmap_sizes = featmap_sizes
@@ -49,6 +49,17 @@ class PAPTargetOffline(object):
         results['_gt_labels'] = DC(_labels)
         results['_gt_ids'] = DC(_ids)
         results['_gt_polarcontours'] = DC(_polarcontours)
+
+        ############## test
+        
+        # gt_masks = np.array([cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks])
+
+        # if gt_masks.shape[0] == 0:
+        #     w, h = results['gt_masks'].shape[-2]/2, results['gt_masks'].shape[-1]/2
+        #     gt_masks = np.ones((0,256,256),dtype=gt_masks.dtype) 
+        #     #print(results['gt_masks'].shape,gt_masks.shape,small_objects_mask.tolist())
+        # results['gt_masks'] = gt_masks      
+
         return results
 
     def get_featmap_size(self, shape):

@@ -53,19 +53,14 @@ class PAPMask(SingleStageDetector):
         else:
             extra_data = None
 
-        with Timer() as t:
-            x = self.extract_feat(img)
-        print("extract feature takes %s s"%t.secs) # 0.2
+        x = self.extract_feat(img)
 
-        with Timer() as t:
-            outs = self.mask_head(x)
-        print("mask head takes %s s"%t.secs) # 0.2
+        outs = self.mask_head(x)
 
         loss_inputs = outs + (gt_masks, extra_data, img_metas, self.train_cfg)
         
-        with Timer() as t:
-            losses = self.mask_head.loss(*loss_inputs)
-        print("compute losses takes %s s"%t.secs) #0.8
+        losses = self.mask_head.loss(*loss_inputs)
+
 
         return losses
 
@@ -73,12 +68,12 @@ class PAPMask(SingleStageDetector):
         x = self.extract_feat(img)
         outs = self.mask_head(x)
 
-        mask_inputs = outs + (img_meta, self.test_cfg, rescale)
-        mask_list = self.mask_head.get_masks(*mask_inputs)
+        bbox_inputs = outs + (img_meta, self.test_cfg, rescale)
+        bbox_list = self.mask_head.get_bboxes(*bbox_inputs)
 
         results = [
-            mask2result(det_masks, det_labels, self.mask_head.num_classes, img_meta[0])
-            for det_labels, det_masks in mask_list]
+            bbox_mask2result(det_bboxes, det_masks, det_labels, self.mask_head.num_classes, img_meta[0])
+            for det_bboxes, det_labels, det_masks in bbox_list]
 
         bbox_results = results[0][0]
         mask_results = results[0][1]

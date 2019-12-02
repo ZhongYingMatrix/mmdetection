@@ -27,7 +27,7 @@ model = dict(
         stacked_convs=4,
         feat_channels=256,
         strides=[8, 16, 32, 64, 128],
-        use_dcn=True,
+        use_dcn=False,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
@@ -93,7 +93,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=0,#5,
+    workers_per_gpu=5,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',

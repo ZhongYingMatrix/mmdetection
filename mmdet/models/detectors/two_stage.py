@@ -247,16 +247,23 @@ class TwoStageDetector(BaseDetector, RPNTestMixin, BBoxTestMixin,
                             dtype=torch.uint8))
                 pos_inds = torch.cat(pos_inds)
                 mask_feats = bbox_feats[pos_inds]
+            from mmdet.utils.timer import TimeStamp
+            t = TimeStamp()
             mask_pred = self.mask_head(mask_feats)
-
+            t('get mask pred')
             mask_targets = self.mask_head.get_target(sampling_results,
                                                      gt_masks,
                                                      self.train_cfg.rcnn)
+            t('get mask target')
             pos_labels = torch.cat(
                 [res.pos_gt_labels for res in sampling_results])
+            t('get pos labels')
             loss_mask = self.mask_head.loss(mask_pred, mask_targets,
                                             pos_labels)
+            t('get loss_mask')
             losses.update(loss_mask)
+            import pdb
+            pdb.set_trace()
 
         return losses
 

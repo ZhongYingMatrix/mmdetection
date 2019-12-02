@@ -177,29 +177,21 @@ class PAPMask_Head(nn.Module):
         gt_labels, gt_ids, gt_polarcontours = self.polar_target(all_level_points, extra_data)
 
         # time stamp
-        #timestamp('prepare pap target')
+        timestamp('prepare pap target')
 
-        # mask_cnt, which_img = 1, {}
-        # for img_num, _gt_masks in enumerate(gt_masks):
-        #     num = _gt_masks.shape[0]
-        #     for i in range(mask_cnt, mask_cnt+num):
-        #         which_img[i] = img_num
-        #     mask_cnt = mask_cnt + num
-
-        # time stamp
-        #timestamp('prepare mask assign')
-        # try:
-        #     gt_masks = np.concatenate(gt_masks)
-        # except:
-        #     print(gt_masks[0].shape,gt_masks[1].shape,gt_masks[2].shape,gt_masks[3].shape)
-        #     raise ValueError
-        # gt_masks = [cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks]
-        # gt_masks = [torch.from_numpy(gt_mask).to(polarcontours[0].device)[None,...] 
-        #             for gt_mask in gt_masks]     
-        # gt_masks = torch.cat(gt_masks) 
+        mask_cnt, which_img = 1, {}
+        for img_num, _gt_masks in enumerate(gt_masks):
+            num = _gt_masks.shape[0]
+            for i in range(mask_cnt, mask_cnt+num):
+                which_img[i] = img_num
+            mask_cnt = mask_cnt + num
+        gt_masks = np.concatenate(gt_masks)
+        gt_masks = [cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks]
+        gt_masks = [torch.from_numpy(gt_mask).to(polarcontours[0].device) 
+                    for gt_mask in gt_masks]      
 
         # time stamp
-        #timestamp('prepare mask resize')
+        timestamp('prepare mask assign')
 
         num_imgs = cls_scores[0].size(0)
         flatten_cls_scores = [
@@ -231,7 +223,7 @@ class PAPMask_Head(nn.Module):
         num_pos = len(pos_inds)
 
         # time stamp
-        #timestamp('flat all value')
+        timestamp('flat all value')
 
         loss_cls = self.loss_cls(
             flatten_cls_scores, flatten_gt_labels,
@@ -256,90 +248,80 @@ class PAPMask_Head(nn.Module):
                                                    pos_gt_centernesses)
 
             # time stamp
-            #timestamp('loss cls & polar & center')
+            timestamp('loss cls & polar & center')
 
             # prototype mask loss
-            #pos_gt_ids = flatten_gt_ids[pos_inds]
+            pos_gt_ids = flatten_gt_ids[pos_inds]
 
-            # pos_contour_x = pos_polarcontours*self.angles.cos() + \
-            #     pos_points[:,0].reshape(-1,1).repeat(1,36)
-            # pos_contour_y = pos_polarcontours*self.angles.sin() + \
-            #     pos_points[:,1].reshape(-1,1).repeat(1,36)
+            pos_contour_x = pos_polarcontours*self.angles.cos() + \
+                pos_points[:,0].reshape(-1,1).repeat(1,36)
+            pos_contour_y = pos_polarcontours*self.angles.sin() + \
+                pos_points[:,1].reshape(-1,1).repeat(1,36)
 
             # time stamp
-            #timestamp('compute pos')
+            timestamp('compute pos and x y')
 
-            # loss_gt_mask = []
-            # loss_proto = []
-            # for i in range(len(pos_gt_ids)):
-                #gt_mask = gt_masks[pos_gt_ids[i].int()-1]
-                # xs, ys = pos_contour_x[i].detach()/4, pos_contour_y[i].detach()/4
-                # contour = torch.stack((xs,ys),1).cpu().numpy()[None,...].astype(int)
-                # contour_range = cv2.drawContours(np.zeros(gt_mask.shape), contour, -1,1,-1)
-
-                # time stamp
-                #timestamp.accumulate('get gt_mask')
-
-                # mask_id = int(pos_gt_ids[i])
-                # one_img_prototypes = prototypes[which_img[mask_id]]
-                # one_img_coefficients = pos_coefficients[i][...,None,None].repeat(1, 
-                #     one_img_prototypes.shape[-2], one_img_prototypes.shape[-1])
-                # pred_prototype = (one_img_coefficients*one_img_prototypes).sum(0)
+            loss_mask = []
+            for i in range(len(pos_gt_ids)):
+                gt_mask = gt_masks[pos_gt_ids[i].int()-1]
+                xs, ys = pos_contour_x[i].detach()/4, pos_contour_y[i].detach()/4
+                contour = torch.stack((xs,ys),1).cpu().numpy()[None,...].astype(int)
+                contour_range = cv2.drawContours(np.zeros(gt_mask.shape), contour, -1,1,-1)
 
                 # time stamp
-                #timestamp.accumulate('pred_prototype')
+                timestamp.accumulate('draw contour range')
 
-                # # outside contour fill with -5, will it work? TODO
-                # pred_mask = torch.from_numpy(-5*(1-contour_range)).to(pred_prototype.device) \
-                #     + pred_prototype * torch.from_numpy(contour_range).to(pred_prototype.device)
+                mask_id = int(pos_gt_ids[i])
+                one_img_prototypes = prototypes[which_img[mask_id]]
+                one_img_coefficients = pos_coefficients[i][...,None,None].repeat(1, 
+                    gt_mask.shape[0], gt_mask.shape[0])
+                pred_prototype = (one_img_coefficients*one_img_prototypes).sum(0)
 
-                # # time stamp
-                # timestamp.accumulate('combine proto and contour')                
+                # time stamp
+                timestamp.accumulate('pred_prototype')
+
+                # outside contour fill with -5, will it work? TODO
+                pred_mask = torch.from_numpy(-5*(1-contour_range)).to(pred_prototype.device) \
+                    + pred_prototype * torch.from_numpy(contour_range).to(pred_prototype.device)
+
+                # time stamp
+                timestamp.accumulate('combine proto and contour')                
                 
-                # left, up, right, bottom = 1e10, 1e10, -1, -1
-                # for mask in (pred_mask, gt_mask):
-                #     if mask.max() <= 0:
-                #         continue
-                #     pos_xs, pos_ys = torch.where(mask>0)
-                #     left = min(pos_xs.min(), left)
-                #     up = min(pos_ys.min(), up)
-                #     right = max(pos_xs.max(), right)
-                #     bottom = max(pos_ys.max(), bottom)
-                # assert left<=right and up<=bottom
+                #pred_mask, gt_mask = self.get_minimal_crop(pred_mask, gt_mask)
+                left, up, right, bottom = 1e10, 1e10, -1, -1
+                for mask in (pred_mask, gt_mask):
+                    if mask.max() <= 0:
+                        continue
+                    pos_xs, pos_ys = torch.where(mask>0)
+                    left = min(pos_xs.min(), left)
+                    up = min(pos_ys.min(), up)
+                    right = max(pos_xs.max(), right)
+                    bottom = max(pos_ys.max(), bottom)
+                assert left<=right and up<=bottom
  
-                # # time stamp
-                # timestamp.accumulate('compute crop x y ')
-
-                # pred_mask, gt_mask = pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
-
-                # # time stamp
-                # timestamp.accumulate('get crop')
-            
-                # loss_gt_mask.append(gt_masks[pos_gt_ids[i].int()-1])
-                # loss_proto.append(pred_prototype)
                 # time stamp
-                #timestamp.accumulate('append gt mask and proto')
-            #timestamp.over()
+                timestamp.accumulate('compute crop x y ')
+
+                pred_mask, gt_mask = pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
+
+                # time stamp
+                timestamp.accumulate('get crop')
             
-            # loss_gt_mask = torch.cat(loss_gt_mask)
-            # loss_proto = torch.cat(loss_proto)
-            # loss_mask = self.loss_mask(loss_proto[None,None,...], loss_gt_mask[None,...].float(), [0])
-            # loss_proto = loss_proto.sigmoid()
-            # inter = (loss_proto*loss_gt_mask).sum()
-            # uni = loss_proto.sum() + loss_mask.sum()
-            # loss_dice = 1 - 2*inter/uni
-            # loss_mask = (loss_mask + loss_dice)/2
-            # time stamp
-            #timestamp('loss_mask')
-            # import pdb
-            # pdb.set_trace()
-            
+                loss_mask.append(
+                    self.loss_mask(pred_mask[None,None,...], gt_mask[None,...].float(), [0])
+                    )
+                # time stamp
+                timestamp.accumulate('compute loss mask')
+            timestamp.over()
+            loss_mask = sum(loss_mask)/len(loss_mask)
+            import pdb
+            pdb.set_trace()
 
 
         else:
             loss_polarcontour = pos_polarcontours.sum()
             loss_centerness = pos_centernesses.sum()
-            #loss_mask = 0
+            loss_mask = 0
             import pdb
             pdb.set_trace()
 
@@ -347,8 +329,7 @@ class PAPMask_Head(nn.Module):
             loss_cls=loss_cls,
             loss_polarcontour=loss_polarcontour,
             loss_centerness=loss_centerness,
-            #loss_mask=loss_mask,
-            )
+            loss_mask=loss_mask)
 
 
 
