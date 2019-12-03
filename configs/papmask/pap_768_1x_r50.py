@@ -39,10 +39,10 @@ model = dict(
         loss_polarcontour=dict(type='MaskIOULoss'),
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        loss_mask=dict(
-            type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
         # loss_mask=dict(
-        #     type='CrossEntropyLoss', loss_weight=1.0),
+        #     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+        loss_mask=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         conv_cfg=None,
         norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),    
             ))

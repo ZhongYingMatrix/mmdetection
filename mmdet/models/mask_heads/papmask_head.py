@@ -176,27 +176,27 @@ class PAPMask_Head(nn.Module):
                                         polarcontours[0].device)
         gt_labels, gt_ids, gt_polarcontours = self.polar_target(all_level_points, extra_data)
 
+        # flatten_pred_prototypes, flatten_gt_masks = self.proto_target(gt_masks, 
+        #                                                 coefficients,
+        #                                                 prototypes,
+        #                                                 extra_data['_gt_ids']
+        #                                                 )
         # time stamp
         #timestamp('prepare pap target')
 
-        # mask_cnt, which_img = 1, {}
-        # for img_num, _gt_masks in enumerate(gt_masks):
-        #     num = _gt_masks.shape[0]
-        #     for i in range(mask_cnt, mask_cnt+num):
-        #         which_img[i] = img_num
-        #     mask_cnt = mask_cnt + num
+        which_img = []
+        for img_num, _gt_masks in enumerate(gt_masks):
+            num = _gt_masks.shape[0]
+            which_img += [img_num]*num
+        which_img = torch.tensor(which_img).to(polarcontours[0].device)
 
         # time stamp
         #timestamp('prepare mask assign')
-        # try:
-        #     gt_masks = np.concatenate(gt_masks)
-        # except:
-        #     print(gt_masks[0].shape,gt_masks[1].shape,gt_masks[2].shape,gt_masks[3].shape)
-        #     raise ValueError
-        # gt_masks = [cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks]
-        # gt_masks = [torch.from_numpy(gt_mask).to(polarcontours[0].device)[None,...] 
-        #             for gt_mask in gt_masks]     
-        # gt_masks = torch.cat(gt_masks) 
+        gt_masks = np.concatenate(gt_masks)
+        gt_masks = [cv2.resize(gt_mask, (0,0), fx=0.25, fy=0.25)  for gt_mask in gt_masks]
+        gt_masks = [torch.from_numpy(gt_mask).to(polarcontours[0].device)[None,...] 
+                    for gt_mask in gt_masks]     
+        gt_masks = torch.cat(gt_masks) 
 
         # time stamp
         #timestamp('prepare mask resize')
@@ -259,12 +259,39 @@ class PAPMask_Head(nn.Module):
             #timestamp('loss cls & polar & center')
 
             # prototype mask loss
-            #pos_gt_ids = flatten_gt_ids[pos_inds]
+            pos_gt_ids = flatten_gt_ids[pos_inds]
 
             # pos_contour_x = pos_polarcontours*self.angles.cos() + \
             #     pos_points[:,0].reshape(-1,1).repeat(1,36)
             # pos_contour_y = pos_polarcontours*self.angles.sin() + \
             #     pos_points[:,1].reshape(-1,1).repeat(1,36)
+
+            which_img = which_img[pos_gt_ids.long()-1]
+            # (Pdb) prototypes.shape
+            # torch.Size([4, 16, 256, 256])
+            # (Pdb) prototypes[which_img].shape                                                                                                 
+            # torch.Size([152, 16, 256, 256])
+            # (Pdb) gt_masks.shape
+            # torch.Size([16, 256, 256])
+            # (Pdb) gt_masks[pos_gt_ids.long()-1].shape
+            # torch.Size([152, 256, 256])
+            # (Pdb) pos_coefficients.shape
+            # torch.Size([152, 16])
+            flatten_img_protomasks, flatten_img_gt_masks = [], []
+            for img_id in range(prototypes.size(0)):
+                flatten_img_prototypes = prototypes[img_id].reshape(self.coefficient_channels,-1)
+                flatten_img_protomasks.append(
+                    (pos_coefficients[which_img == img_id].mm(flatten_img_prototypes)).reshape(-1)
+                )
+                img_gt_masks = gt_masks[pos_gt_ids.long()-1][which_img == img_id]
+                flatten_img_gt_masks.append(img_gt_masks.reshape(-1))
+            flatten_img_protomasks = torch.cat(flatten_img_protomasks)
+            flatten_img_gt_masks = torch.cat(flatten_img_gt_masks)
+
+            loss_mask = self.loss_mask(flatten_img_protomasks,
+                                                   flatten_img_gt_masks)
+
+            #import pdb; pdb.set_trace()
 
             # time stamp
             #timestamp('compute pos')
@@ -339,15 +366,13 @@ class PAPMask_Head(nn.Module):
         else:
             loss_polarcontour = pos_polarcontours.sum()
             loss_centerness = pos_centernesses.sum()
-            #loss_mask = 0
-            import pdb
-            pdb.set_trace()
+            loss_mask = pos_coefficients.sum()
 
         return dict(
             loss_cls=loss_cls,
             loss_polarcontour=loss_polarcontour,
             loss_centerness=loss_centerness,
-            #loss_mask=loss_mask,
+            loss_mask=loss_mask,
             )
 
 
@@ -438,18 +463,21 @@ class PAPMask_Head(nn.Module):
         gt_centernesses = (pos_gt_polarcontours.min(dim=-1)[0] / pos_gt_polarcontours.max(dim=-1)[0])
         return torch.sqrt(gt_centernesses)
 
-    def get_minimal_crop(self, pred_mask, gt_mask):
-        left, up, right, bottom = 1e10, 1e10, -1, -1
-        for mask in (pred_mask, gt_mask):
-            if mask.max() <= 0:
-                continue
-            pos_xs, pos_ys = torch.where(mask>0)
-            left = min(pos_xs.min(), left)
-            up = min(pos_ys.min(), up)
-            right = max(pos_xs.max(), right)
-            bottom = max(pos_ys.max(), bottom)
-        assert left<=right and up<=bottom
-        return pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
+    # def get_minimal_crop(self, pred_mask, gt_mask):
+    #     left, up, right, bottom = 1e10, 1e10, -1, -1
+    #     for mask in (pred_mask, gt_mask):
+    #         if mask.max() <= 0:
+    #             continue
+    #         pos_xs, pos_ys = torch.where(mask>0)
+    #         left = min(pos_xs.min(), left)
+    #         up = min(pos_ys.min(), up)
+    #         right = max(pos_xs.max(), right)
+    #         bottom = max(pos_ys.max(), bottom)
+    #     assert left<=right and up<=bottom
+    #     return pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
+
+    def proto_target(self, gt_masks, coefficients, prototypes, _gt_ids):
+        import pdb; pdb.set_trace()
 
 
 
