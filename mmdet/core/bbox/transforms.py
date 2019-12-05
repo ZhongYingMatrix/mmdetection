@@ -239,6 +239,40 @@ def bbox_mask2result(bboxes, masks, labels, num_classes, img_meta):
         bbox_results = [bboxes[labels == i, :] for i in range(num_classes - 1)]
         return bbox_results, mask_results
 
+def bbox_contour_mask2result(bboxes, contours, masks, labels, num_classes, img_meta):
+    ori_shape = img_meta['ori_shape']
+    img_h, img_w, _ = ori_shape
+
+    mask_results = [[] for _ in range(num_classes - 1)]
+
+    for i in range(masks.shape[0]):
+        contour_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        _mask = [contours[i].transpose(1,0).unsqueeze(1).int().data.cpu().numpy()]
+        contour_mask = cv2.drawContours(contour_mask, _mask, -1,1,-1)
+        mask = (masks[i]>0.5).int().data.cpu().numpy().astype(np.uint8)
+        mask = mmcv.imresize(mask, (img_w, img_h))
+        
+        mask = mask * contour_mask
+        rle = mask_util.encode(
+            np.array(mask[:, :, np.newaxis], order='F'))[0]
+
+        label = labels[i]
+
+        mask_results[label].append(rle)
+
+
+    if bboxes.shape[0] == 0:
+        bbox_results = [
+            np.zeros((0, 5), dtype=np.float32) for i in range(num_classes - 1)
+        ]
+        return bbox_results, mask_results
+    else:
+        bboxes = bboxes.cpu().numpy()
+        labels = labels.cpu().numpy()
+        bbox_results = [bboxes[labels == i, :] for i in range(num_classes - 1)]
+        return bbox_results, mask_results
+
+
 def distance2bbox(points, distance, max_shape=None):
     """Decode distance prediction to bounding box.
 

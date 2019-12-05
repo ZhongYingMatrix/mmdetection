@@ -29,7 +29,7 @@ class PAPTargetOffline(object):
         gt_masks = gt_masks[small_objects_mask.tolist()]
         results['gt_bboxes'] = gt_bboxes.numpy()
         results['gt_labels'] = gt_labels.numpy().astype(np.int64)
-        
+        results['gt_masks'] = gt_masks
 
         featmap_sizes = self.get_featmap_size(results['pad_shape'])
         self.featmap_sizes = featmap_sizes

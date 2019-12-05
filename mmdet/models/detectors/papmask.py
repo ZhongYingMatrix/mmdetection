@@ -1,7 +1,7 @@
 from ..registry import DETECTORS
 from .single_stage import SingleStageDetector
 import torch.nn as nn
-from mmdet.core import bbox_mask2result
+from mmdet.core import bbox_mask2result, bbox_contour_mask2result
 from ..registry import DETECTORS
 from .. import builder
 from mmdet.utils import Timer
@@ -57,7 +57,7 @@ class PAPMask(SingleStageDetector):
 
         outs = self.mask_head(x)
 
-        loss_inputs = outs + (gt_masks, extra_data, img_metas, self.train_cfg)
+        loss_inputs = outs + (gt_bboxes, gt_masks, extra_data, img_metas, self.train_cfg)
         
         losses = self.mask_head.loss(*loss_inputs)
 
@@ -68,12 +68,13 @@ class PAPMask(SingleStageDetector):
         x = self.extract_feat(img)
         outs = self.mask_head(x)
 
-        bbox_inputs = outs + (img_meta, self.test_cfg, rescale)
-        bbox_list = self.mask_head.get_bboxes(*bbox_inputs)
+        mask_inputs = outs + (img_meta, self.test_cfg, rescale)
+        mask_list = self.mask_head.get_masks(*mask_inputs)
 
+        # TODO proto mask encode flow 
         results = [
-            bbox_mask2result(det_bboxes, det_masks, det_labels, self.mask_head.num_classes, img_meta[0])
-            for det_bboxes, det_labels, det_masks in bbox_list]
+            bbox_contour_mask2result(det_bboxes, det_contours, det_masks, det_labels, self.mask_head.num_classes, img_meta[0])
+            for det_bboxes, det_labels, det_contours, det_masks in mask_list]
 
         bbox_results = results[0][0]
         mask_results = results[0][1]

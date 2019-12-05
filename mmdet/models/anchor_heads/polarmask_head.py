@@ -29,7 +29,7 @@ class PolarMask_Head(nn.Module):
                  regress_ranges=((-1, 64), (64, 128), (128, 256), (256, 512),
                                  (512, INF)),
                  use_dcn=False,
-                 mask_nms=False,
+                 mask_nms=True,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,

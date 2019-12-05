@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms, multiclass_nms_with_mask
+from mmdet.core import multiclass_nms_with_contour_coefficient
 from mmdet.ops import ModulatedDeformConvPack
 
 from ..builder import build_loss
@@ -160,6 +161,7 @@ class PAPMask_Head(nn.Module):
              polarcontours,
              coefficients,
              prototypes,
+             gt_bboxes,
              gt_masks, 
              extra_data, 
              img_metas, 
@@ -175,14 +177,6 @@ class PAPMask_Head(nn.Module):
         all_level_points = self.get_points(featmap_sizes, polarcontours[0].dtype,
                                         polarcontours[0].device)
         gt_labels, gt_ids, gt_polarcontours = self.polar_target(all_level_points, extra_data)
-
-        # flatten_pred_prototypes, flatten_gt_masks = self.proto_target(gt_masks, 
-        #                                                 coefficients,
-        #                                                 prototypes,
-        #                                                 extra_data['_gt_ids']
-        #                                                 )
-        # time stamp
-        #timestamp('prepare pap target')
 
         which_img = []
         for img_num, _gt_masks in enumerate(gt_masks):
@@ -265,6 +259,10 @@ class PAPMask_Head(nn.Module):
             #     pos_points[:,0].reshape(-1,1).repeat(1,36)
             # pos_contour_y = pos_polarcontours*self.angles.sin() + \
             #     pos_points[:,1].reshape(-1,1).repeat(1,36)
+            # pos_contour_left = pos_contour_x.min(1)[0]
+            # pos_contour_right = pos_contour_x.max(1)[0]
+            # pos_contour_up = pos_contour_y.min(1)[0]
+            # pos_contour_bottom = pos_contour_y.max(1)[0]
 
             which_img = which_img[pos_gt_ids.long()-1]
             # (Pdb) prototypes.shape
@@ -290,8 +288,10 @@ class PAPMask_Head(nn.Module):
 
             loss_mask = self.loss_mask(flatten_img_protomasks,
                                                    flatten_img_gt_masks)
+            loss_mask_dice = 1 - (flatten_img_protomasks.sigmoid()*flatten_img_gt_masks).sum()*2 \
+                /(flatten_img_protomasks.sigmoid().sum()+flatten_img_gt_masks.sum())
+            loss_mask += loss_mask_dice
 
-            #import pdb; pdb.set_trace()
 
             # time stamp
             #timestamp('compute pos')
@@ -375,6 +375,135 @@ class PAPMask_Head(nn.Module):
             loss_mask=loss_mask,
             )
 
+    def get_masks(self,
+                  cls_scores,
+                  centernesses,
+                  polarcontours,
+                  coefficients,
+                  prototypes,
+                  img_metas,
+                  cfg,
+                  rescale=False):
+        assert len(cls_scores) == len(centernesses) == len(polarcontours) == len(coefficients)
+        prototypes = prototypes[0]
+        num_levels = len(cls_scores)
+
+        featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
+        mlvl_points = self.get_points(featmap_sizes, polarcontours[0].dtype,
+                                      polarcontours[0].device)
+        result_list = []
+        for img_id in range(len(img_metas)):
+            cls_score_list = [
+                cls_scores[i][img_id].detach() for i in range(num_levels)
+            ]
+            centerness_pred_list = [
+                centernesses[i][img_id].detach() for i in range(num_levels)
+            ]
+            polarcontour_list = [
+                polarcontours[i][img_id].detach() for i in range(num_levels)
+            ]
+            coefficient_list = [
+                coefficients[i][img_id].detach() for i in range(num_levels)
+            ]
+            prototype = prototypes[img_id].detach()
+            img_shape = img_metas[img_id]['img_shape']
+            scale_factor = img_metas[img_id]['scale_factor']
+            det_masks = self.get_masks_single(cls_score_list,
+                                              centerness_pred_list,
+                                              polarcontour_list,
+                                              coefficient_list,
+                                              prototype,
+                                              mlvl_points, img_shape,
+                                              scale_factor, cfg, rescale)
+            result_list.append(det_masks)
+        return result_list
+
+    def get_masks_single(self,
+                         cls_scores,
+                         centernesses,
+                         polarcontours,
+                         coefficients,
+                         prototype,
+                         mlvl_points,
+                         img_shape,
+                         scale_factor,
+                         cfg,
+                         rescale=False):
+        assert len(cls_scores) == len(centernesses) == len(polarcontours) == len(coefficients)
+        mlvl_scores, mlvl_centerness, mlvl_contours, mlvl_expand_contours, mlvl_coefficients \
+            = [], [], [], [], []
+        for cls_score, centerness, polarcontour, coefficient, points in zip(
+                cls_scores, centernesses, polarcontours, coefficients, mlvl_points):
+            assert cls_score.size()[-2:] == polarcontour.size()[-2:]
+            scores = cls_score.permute(1, 2, 0).reshape(
+                -1, self.cls_out_channels).sigmoid()
+            centerness = centerness.permute(1, 2, 0).reshape(-1).sigmoid()
+            polarcontour = polarcontour.permute(1, 2, 0).reshape(-1, 36)
+            coefficient = coefficient.permute(1, 2, 0).reshape(-1, 16)
+
+            nms_pre = cfg.get('nms_pre', -1)
+            if nms_pre > 0 and scores.shape[0] > nms_pre:
+                max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                _, topk_inds = max_scores.topk(nms_pre)
+                scores = scores[topk_inds, :]
+                centerness = centerness[topk_inds]
+                polarcontour = polarcontour[topk_inds,:]
+                coefficient = coefficient[topk_inds,:]
+                points = points[topk_inds, :]
+            contours = self.polarcontour2contour(points,
+                polarcontour, self.angles, max_shape=img_shape, expand_factor=1.0)
+            expand_contours = self.polarcontour2contour(points,
+                polarcontour, self.angles, max_shape=img_shape, expand_factor=1.2)
+
+            mlvl_scores.append(scores)
+            mlvl_centerness.append(centerness)
+            mlvl_contours.append(contours)
+            mlvl_expand_contours.append(expand_contours)
+            mlvl_coefficients.append(coefficient)
+       
+        mlvl_scores = torch.cat(mlvl_scores)
+        padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1) # ?
+        mlvl_scores = torch.cat([padding, mlvl_scores], dim=1)
+        mlvl_centerness = torch.cat(mlvl_centerness)
+        mlvl_contours = torch.cat(mlvl_contours)
+        mlvl_expand_contours = torch.cat(mlvl_expand_contours)
+        mlvl_coefficients = torch.cat(mlvl_coefficients)
+
+        if rescale:
+            try:
+                scale_factor = torch.Tensor(scale_factor)[:2].cuda().unsqueeze(1).repeat(1, 36)
+                _mlvl_contours = mlvl_contours / scale_factor
+                _mlvl_expand_contours = mlvl_expand_contours / scale_factor
+            except:
+                _mlvl_contours = mlvl_contours / mlvl_contours.new_tensor(scale_factor)
+                _mlvl_expand_contours = mlvl_expand_contours / mlvl_expand_contours.new_tensor(scale_factor)
+        else:
+            raise NotImplementedError
+
+        # mask centerness is smaller than origin centerness, 
+        # so add a constant is important or the score will be too low.
+        centerness_factor = 0.5 
+        _mlvl_bboxes = torch.stack( [_mlvl_contours[:, 0].min(1)[0],
+                                     _mlvl_contours[:, 1].min(1)[0],
+                                     _mlvl_contours[:, 0].max(1)[0],
+                                     _mlvl_contours[:, 1].max(1)[0]], -1)
+ 
+        det_bboxes, det_labels, det_contours, det_coefficients = multiclass_nms_with_contour_coefficient(
+            _mlvl_bboxes,
+            mlvl_scores,
+            _mlvl_expand_contours,
+            mlvl_coefficients,
+            cfg.score_thr,
+            cfg.nms,
+            cfg.max_per_img,
+            score_factors=mlvl_centerness + centerness_factor)
+
+        flatten_prototype = prototype.reshape(self.coefficient_channels, -1)
+        det_masks = det_coefficients.mm(flatten_prototype).reshape(
+            det_labels.size(0), prototype.size(1), prototype.size(2))
+        det_masks = det_masks.sigmoid()
+
+        return det_bboxes, det_labels, det_contours, det_masks
 
 
 
@@ -463,21 +592,36 @@ class PAPMask_Head(nn.Module):
         gt_centernesses = (pos_gt_polarcontours.min(dim=-1)[0] / pos_gt_polarcontours.max(dim=-1)[0])
         return torch.sqrt(gt_centernesses)
 
-    # def get_minimal_crop(self, pred_mask, gt_mask):
-    #     left, up, right, bottom = 1e10, 1e10, -1, -1
-    #     for mask in (pred_mask, gt_mask):
-    #         if mask.max() <= 0:
-    #             continue
-    #         pos_xs, pos_ys = torch.where(mask>0)
-    #         left = min(pos_xs.min(), left)
-    #         up = min(pos_ys.min(), up)
-    #         right = max(pos_xs.max(), right)
-    #         bottom = max(pos_ys.max(), bottom)
-    #     assert left<=right and up<=bottom
-    #     return pred_mask[left:right+1, up:bottom+1], gt_mask[left:right+1, up:bottom+1]
+    def polarcontour2contour(self, points, distances, angles, max_shape=None, expand_factor=1.2):
+        '''Decode distance prediction to 36 mask points
+        Args:
+            points (Tensor): Shape (n, 2), [x, y].
+            distance (Tensor): Distance from the given point to 36,from angle 0 to 350.
+            angles (Tensor):
+            max_shape (tuple): Shape of the image.
+        Returns:
+            Tensor: Decoded masks.
+        '''
+        distances *= expand_factor
+        num_points = points.shape[0]
+        points = points[:, :, None].repeat(1, 1, 36)
+        c_x, c_y = points[:, 0], points[:, 1]
 
-    def proto_target(self, gt_masks, coefficients, prototypes, _gt_ids):
-        import pdb; pdb.set_trace()
+        sin = torch.sin(angles)
+        cos = torch.cos(angles)
+        sin = sin[None, :].repeat(num_points, 1)
+        cos = cos[None, :].repeat(num_points, 1)
+
+        x = distances * sin + c_x
+        y = distances * cos + c_y
+
+        if max_shape is not None:
+            x = x.clamp(min=0, max=max_shape[1] - 1)
+            y = y.clamp(min=0, max=max_shape[0] - 1)
+
+        res = torch.cat([x[:, None, :], y[:, None, :]], dim=1)
+        return res
+
 
 
 

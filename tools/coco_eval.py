@@ -6,7 +6,8 @@ from mmdet.core import coco_eval
 def main():
     parser = ArgumentParser(description='COCO Evaluation')
     parser.add_argument('result', help='result file path')
-    parser.add_argument('--ann', help='annotation file path')
+    parser.add_argument('--ann', help='annotation file path',
+        default='./data/coco/annotations/instances_val2017.json')
     parser.add_argument(
         '--types',
         type=str,

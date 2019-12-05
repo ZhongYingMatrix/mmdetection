@@ -112,7 +112,7 @@ data = dict(
 # optimizer
 optimizer = dict(
     type='SGD',
-    lr=0.02,
+    lr=0.01,
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
@@ -138,7 +138,7 @@ total_epochs = 12
 device_ids = range(4)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/pap_768_1x_r50'
+work_dir = './work_dirs/pap_1024_1x_r50'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]

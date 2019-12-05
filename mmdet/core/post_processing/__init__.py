@@ -1,8 +1,9 @@
-from .bbox_nms import multiclass_nms, multiclass_nms_with_mask
+from .bbox_nms import multiclass_nms, multiclass_nms_with_mask, multiclass_nms_with_contour_coefficient
 from .merge_augs import (merge_aug_bboxes, merge_aug_masks,
                          merge_aug_proposals, merge_aug_scores)
 
 __all__ = [
     'multiclass_nms', 'merge_aug_proposals', 'merge_aug_bboxes',
-    'merge_aug_scores', 'merge_aug_masks', 'multiclass_nms_with_mask'
+    'merge_aug_scores', 'merge_aug_masks', 'multiclass_nms_with_mask',
+    'multiclass_nms_with_contour_coefficient'
 ]
