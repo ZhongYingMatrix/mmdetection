@@ -1,8 +1,10 @@
+
 # fp16 settings
 fp16 = dict(loss_scale=512.)
+
 # model settings
 model = dict(
-    type='PolarMask',
+    type='PAPMask',
     pretrained='open-mmlab://resnet50_caffe',
     backbone=dict(
         type='ResNet',
@@ -21,34 +23,40 @@ model = dict(
         extra_convs_on_inputs=False,  # use P5
         num_outs=5,
         relu_before_extra_convs=True),
-    bbox_head=dict(
-        type='PolarMask_Head',
+    mask_head=dict(
+        type='PAPMask_Head',
         num_classes=81,
         in_channels=256,
+        coefficient_channels=16,
         stacked_convs=4,
         feat_channels=256,
         strides=[8, 16, 32, 64, 128],
+        use_dcn=False,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
             gamma=2.0,
             alpha=0.25,
             loss_weight=1.0),
-        loss_bbox=dict(type='IoULoss', loss_weight=1.0),
-        loss_mask=dict(type='MaskIOULoss'),
+        #loss_bbox=dict(type='IoULoss', loss_weight=1.0),
+        #loss_polarcontour=dict(type='PolarContourMarginIOULoss'),
+        loss_polarcontour=dict(type='MaskIOULoss'),
         loss_centerness=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)))
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        # loss_mask=dict(
+        #     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+        loss_mask=dict(
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        conv_cfg=None,
+        norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),    
+            ))
 # training and testing settings
 train_cfg = dict(
-    assigner=dict(
-        type='MaxIoUAssigner',
-        pos_iou_thr=0.5,
-        neg_iou_thr=0.4,
-        min_pos_iou=0,
-        ignore_iof_thr=-1),
-    allowed_border=-1,
-    pos_weight=-1,
-    debug=False)
+    nms_pre=1000,
+    min_bbox_size=0,
+    score_thr=0.05,
+    nms=dict(type='nms', iou_thr=0.5),
+    max_per_img=100)
 test_cfg = dict(
     nms_pre=1000,
     min_bbox_size=0,
@@ -63,21 +71,20 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
-    dict(type='Resize', img_scale=(1280, 768), keep_ratio=False),#keep_ratio=True), TODO
+    dict(type='Resize', img_scale=(1024, 1024), keep_ratio=False),#keep_ratio=True), TODO
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
-    dict(type='PolarTargetOffline'),# offline ray label generation
+    dict(type='PAPTargetOffline'),# offline ray label generation
     dict(type='DefaultFormatBundle'),
-    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks',
-    '_gt_bboxes', '_gt_labels', '_gt_masks']),
+    dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks', '_gt_labels','_gt_ids', '_gt_polarcontours']),
 
 ]
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
         type='MultiScaleFlipAug',
-        img_scale=(1280, 768),
+        img_scale=(1024, 1024),
         flip=False,
         transforms=[
             dict(type='Resize', keep_ratio=False),#keep_ratio=True), TODO
@@ -90,7 +97,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=5, 
+    workers_per_gpu=5,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
@@ -109,7 +116,7 @@ data = dict(
 # optimizer
 optimizer = dict(
     type='SGD',
-    lr=0.02,
+    lr=0.01,
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
@@ -120,7 +127,7 @@ lr_config = dict(
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
-    step=[8, 11])
+    step=[1, 2])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -131,11 +138,11 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 12
+total_epochs = 3
 device_ids = range(4)
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/polar_768_1x_r50'
-load_from = None
+work_dir = './work_dirs/pap_1024_1x_r50'
 resume_from = None
+load_from = './work_dirs/pap_1024_1x_r50_old/epoch_12.pth'
 workflow = [('train', 1)]

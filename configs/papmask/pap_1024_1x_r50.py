@@ -1,3 +1,7 @@
+
+# fp16 settings
+fp16 = dict(loss_scale=512.)
+
 # model settings
 model = dict(
     type='PAPMask',
@@ -60,7 +64,7 @@ test_cfg = dict(
     nms=dict(type='nms', iou_thr=0.5),
     max_per_img=100)
 # dataset settings
-dataset_type = 'CocoDataset'
+dataset_type = 'Coco_polarmask_Dataset'
 data_root = 'data/coco/'
 img_norm_cfg = dict(
     mean=[102.9801, 115.9465, 122.7717], std=[1.0, 1.0, 1.0], to_rgb=False)

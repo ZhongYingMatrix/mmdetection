@@ -69,11 +69,33 @@ class PAPMask_Head(nn.Module):
         self._init_layers()
 
     def _init_layers(self):
-        self.share_convs = nn.ModuleList()
+        self.cls_convs = nn.ModuleList()
+        self.polar_convs = nn.ModuleList()
+        self.proto_convs = nn.ModuleList()
         for i in range(self.stacked_convs):
             chn = self.in_channels if i == 0 else self.feat_channels
             if not self.use_dcn:
-                self.share_convs.append(
+                self.cls_convs.append(
+                    ConvModule(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        conv_cfg=self.conv_cfg,
+                        norm_cfg=self.norm_cfg,
+                        bias=self.norm_cfg is None))
+                self.polar_convs.append(
+                    ConvModule(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        conv_cfg=self.conv_cfg,
+                        norm_cfg=self.norm_cfg,
+                        bias=self.norm_cfg is None))
+                self.proto_convs.append(
                     ConvModule(
                         chn,
                         self.feat_channels,
@@ -84,7 +106,7 @@ class PAPMask_Head(nn.Module):
                         norm_cfg=self.norm_cfg,
                         bias=self.norm_cfg is None))
             else:
-                self.share_convs.append(
+                self.cls_convs.append(
                     ModulatedDeformConvPack(
                         chn,
                         self.feat_channels,
@@ -95,17 +117,44 @@ class PAPMask_Head(nn.Module):
                         deformable_groups=1,
                     ))
                 if self.norm_cfg:
-                    self.share_convs.append(build_norm_layer(self.norm_cfg, self.feat_channels)[1])
-                self.share_convs.append(nn.ReLU(inplace=True))
+                    self.cls_convs.append(build_norm_layer(self.norm_cfg, self.feat_channels)[1])
+                self.cls_convs.append(nn.ReLU(inplace=True))
+
+                self.polar_convs.append(
+                    ModulatedDeformConvPack(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        dilation=1,
+                        deformable_groups=1,
+                    ))
+                if self.norm_cfg:
+                    self.polar_convs.append(build_norm_layer(self.norm_cfg, self.feat_channels)[1])
+                self.polar_convs.append(nn.ReLU(inplace=True))
+                
+                self.proto_convs.append(
+                    ModulatedDeformConvPack(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        dilation=1,
+                        deformable_groups=1,
+                    ))
+                if self.norm_cfg:
+                    self.proto_convs.append(build_norm_layer(self.norm_cfg, self.feat_channels)[1])
+                self.proto_convs.append(nn.ReLU(inplace=True))
 
         self.cls_conv = nn.Conv2d(
             self.feat_channels, self.cls_out_channels, 3, padding=1)
-        self.centerness_conv = nn.Conv2d(self.feat_channels, 1, 3, padding=1)
-
-        self.polarcontour_conv = nn.Conv2d(self.feat_channels, 36, 3, padding=1)
-        self.scales_polar = nn.ModuleList([Scale(1.0) for _ in self.strides])
         self.coefficient_conv = nn.Conv2d(
             self.feat_channels, self.coefficient_channels, 3, padding=1)
+        self.polarcontour_conv = nn.Conv2d(self.feat_channels, 36, 3, padding=1)
+        self.centerness_conv = nn.Conv2d(self.feat_channels, 1, 3, padding=1)
+        self.scales_polar = nn.ModuleList([Scale(1.0) for _ in self.strides])
         self.prototype_conv1 = ConvModule(
                         self.feat_channels,
                         self.feat_channels,
@@ -120,7 +169,11 @@ class PAPMask_Head(nn.Module):
 
     def init_weights(self):
         if not self.use_dcn:
-            for m in self.share_convs:
+            for m in self.cls_convs:
+                normal_init(m.conv, std=0.01)
+            for m in self.polar_convs:
+                normal_init(m.conv, std=0.01)
+            for m in self.proto_convs:
                 normal_init(m.conv, std=0.01)
         else:
             pass
@@ -138,20 +191,31 @@ class PAPMask_Head(nn.Module):
             feats, self.scales_polar, [i for i in range(len(self.strides))])
     
     def forward_single(self, x, scales_polar, feat_id):
-        share_feat = x
-        for share_layer in self.share_convs:
-            share_feat = share_layer(share_feat)
+        cls_feat = x
+        polar_feat = x
+        
+        for cls_layer in self.cls_convs:
+            cls_feat = cls_layer(cls_feat)
+        for polar_layer in self.polar_convs:
+            polar_feat = polar_layer(polar_feat)
 
-        cls_score = self.cls_conv(share_feat)
-        centerness = self.centerness_conv(share_feat)
-        polarcontour = scales_polar(self.polarcontour_conv(share_feat)).float().exp()
-        coefficient = self.coefficient_conv(share_feat).float().tanh()
+        cls_score = self.cls_conv(cls_feat)
+        centerness = self.centerness_conv(polar_feat)
+        polarcontour = scales_polar(self.polarcontour_conv(polar_feat)).float().exp()
+        coefficient = self.coefficient_conv(cls_feat).float().tanh()
 
-        prototype = None if feat_id != 0 else self.prototype_conv2(
-            self.prototype_conv1(
-                F.interpolate(share_feat, scale_factor=2, mode='nearest')
+        if feat_id != 0:
+            prototype = None
+        else:
+            proto_feat = x
+            for proto_layer in self.proto_convs:
+                proto_feat = proto_layer(proto_feat)
+            prototype = self.prototype_conv2(
+                self.prototype_conv1(
+                    F.interpolate(proto_feat, scale_factor=2, mode='nearest')
+                )
             )
-        )
+
         return cls_score, centerness, polarcontour, coefficient, prototype
 
     @force_fp32(apply_to=('cls_scores', 'centernesses','polarcontours', 'coefficients', 'prototypes'))
@@ -374,7 +438,7 @@ class PAPMask_Head(nn.Module):
             loss_centerness=loss_centerness,
             loss_mask=loss_mask,
             )
-    
+
     @force_fp32(apply_to=('cls_scores', 'centernesses','polarcontours', 'coefficients', 'prototypes'))
     def get_masks(self,
                   cls_scores,

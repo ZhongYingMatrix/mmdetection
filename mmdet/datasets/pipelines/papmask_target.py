@@ -21,15 +21,15 @@ class PAPTargetOffline(object):
         gt_masks = results['gt_masks'][:len(results['gt_bboxes'])]
         gt_bboxes = torch.Tensor(results['gt_bboxes'])
         gt_labels = torch.Tensor(results['gt_labels'])
-        small_objects_mask = (gt_bboxes[:,2]-gt_bboxes[:,0]>10) & \
-                             (gt_bboxes[:,3]-gt_bboxes[:,1]>10) & \
-                             torch.from_numpy(gt_masks.sum(-1).sum(-1)>15)
-        gt_bboxes = gt_bboxes[small_objects_mask.tolist()]
-        gt_labels = gt_labels[small_objects_mask.tolist()]
-        gt_masks = gt_masks[small_objects_mask.tolist()]
-        results['gt_bboxes'] = gt_bboxes.numpy()
-        results['gt_labels'] = gt_labels.numpy().astype(np.int64)
-        results['gt_masks'] = gt_masks
+        #small_objects_mask = (gt_bboxes[:,2]-gt_bboxes[:,0]>10) & \
+        #                     (gt_bboxes[:,3]-gt_bboxes[:,1]>10) & \
+        #                     torch.from_numpy(gt_masks.sum(-1).sum(-1)>15)
+        #gt_bboxes = gt_bboxes[small_objects_mask.tolist()]
+        #gt_labels = gt_labels[small_objects_mask.tolist()]
+        #gt_masks = gt_masks[small_objects_mask.tolist()]
+        #results['gt_bboxes'] = gt_bboxes.numpy()
+        #results['gt_labels'] = gt_labels.numpy().astype(np.int64)
+        #results['gt_masks'] = gt_masks
 
         featmap_sizes = self.get_featmap_size(results['pad_shape'])
         self.featmap_sizes = featmap_sizes
