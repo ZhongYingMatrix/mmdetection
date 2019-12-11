@@ -16,10 +16,11 @@ from .single_stage import SingleStageDetector
 from .two_stage import TwoStageDetector
 from .polarmask import PolarMask
 from .papmask import PAPMask
+from .fcos_proto import FCOS_PROTO
 
 __all__ = [
     'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
     'FastRCNN', 'FasterRCNN', 'MaskRCNN', 'CascadeRCNN', 'HybridTaskCascade',
     'DoubleHeadRCNN', 'RetinaNet', 'FCOS', 'GridRCNN', 'MaskScoringRCNN',
-    'RepPointsDetector', 'FOVEA', 'PolarMask', 'PAPMask'
+    'RepPointsDetector', 'FOVEA', 'PolarMask', 'PAPMask', 'FCOS_PROTO'
 ]

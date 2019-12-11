@@ -73,10 +73,11 @@ def main():
 
     # init logger before other steps
     logger = get_root_logger(cfg.log_level)
-    logger.info('Config file saveing: {} to {}'.format(args.config, cfg.work_dir))
-    shutil.copyfile(
-        args.config, os.path.join(cfg.work_dir, args.config.split('/')[-1])
-    )
+    # logger.info('Config file saveing: {} to {}'.format(args.config, cfg.work_dir))
+    # os.mkdir(cfg.work_dir)
+    # shutil.copyfile(
+    #     args.config, os.path.join(cfg.work_dir, args.config.split('/')[-1])
+    # )
     
     # init logger before other steps
     logger.info('Distributed training: {}'.format(distributed))
