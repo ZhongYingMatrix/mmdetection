@@ -117,7 +117,7 @@ lr_config = dict(
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
-    step=[8, 11])
+    step=[4, 5])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -128,10 +128,10 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 12
+total_epochs = 6
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu'
-load_from = None
+load_from = '/home/zhongying/research/repo/mmdetection/work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu_old/latest.pth'
 resume_from = None
 workflow = [('train', 1)]

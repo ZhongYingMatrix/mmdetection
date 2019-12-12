@@ -263,6 +263,11 @@ class FCOS_Proto_Head(nn.Module):
             loss_centerness = pos_centerness.sum()
 
         # ---------------------protonet---------------------------------------------------------
+        pred_bigger = (pos_decoded_bbox_preds>=pos_decoded_target_preds).int()
+        target_bigger = (pos_decoded_bbox_preds<pos_decoded_target_preds).int()
+        mask_range = torch.cat(((target_bigger*pos_decoded_bbox_preds + pred_bigger*pos_decoded_target_preds)[:,:2],
+            (pred_bigger*pos_decoded_bbox_preds + target_bigger*pos_decoded_target_preds)[:,2:]), dim=1).int().clamp_min(0)
+        mask_range /= 4
         prototypes = prototypes[0]
         which_img = []
         for img_num, _gt_masks in enumerate(gt_masks):
@@ -291,11 +296,13 @@ class FCOS_Proto_Head(nn.Module):
             flatten_img_protomasks, flatten_img_gt_masks = [], []
             for img_id in range(prototypes.size(0)):
                 flatten_img_prototypes = prototypes[img_id].reshape(16,-1)
-                flatten_img_protomasks.append(
-                    (pos_coefficients[which_img == img_id].mm(flatten_img_prototypes)).reshape(-1)
-                )
+                img_mask_range = mask_range[which_img == img_id]
+                img_protomasks = (pos_coefficients[which_img == img_id].mm(flatten_img_prototypes)).reshape(-1, prototypes.shape[2], prototypes.shape[3])
                 img_gt_masks = new_gt_masks[pos_gt_ids.long()-1][which_img == img_id]
-                flatten_img_gt_masks.append(img_gt_masks.reshape(-1))
+                for mask_id in range(img_protomasks.shape[0]):
+                    _range = img_mask_range[mask_id]
+                    flatten_img_protomasks.append(img_protomasks[mask_id][_range[1]:_range[3], _range[0]:_range[2]].reshape(-1))
+                    flatten_img_gt_masks.append(img_gt_masks[mask_id][_range[1]:_range[3], _range[0]:_range[2]].reshape(-1))
             flatten_img_protomasks = torch.cat(flatten_img_protomasks)
             flatten_img_gt_masks = torch.cat(flatten_img_gt_masks)
 
@@ -431,8 +438,9 @@ class FCOS_Proto_Head(nn.Module):
             bbox = det_bboxes[i]
             bbox_range = np.zeros((ori_shape[0], ori_shape[1]), dtype=np.uint8)
             bbox_range[int(bbox[1]):int(bbox[3]),int(bbox[0]):int(bbox[2])] += 1
-            mask = mmcv.imresize(mask, (mask.shape[1]*4, mask.shape[0]*4))
-            mask = mask[:img_shape[0],:img_shape[1]]
+            # mask = mmcv.imresize(mask, (mask.shape[1]*4, mask.shape[0]*4))
+            # mask = mask[:img_shape[0],:img_shape[1]]
+            mask = mask[:int(img_shape[0]/4),:int(img_shape[1]/4)]
             mask = mmcv.imresize(mask, (ori_shape[1], ori_shape[0]))
             mask *= bbox_range
             masks_result.append(mask)
