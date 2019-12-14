@@ -1,3 +1,6 @@
+# fp16 settings
+fp16 = dict(loss_scale=512.)
+
 # model settings
 model = dict(
     type='FCOS_PROTO',
@@ -36,7 +39,11 @@ model = dict(
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_mask=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),    
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        use_crop_in_loss_mask=True,
+        use_ctr_size_weight=True,
+        loss_mask_factor = 2.0,
+        loss_centerness_factor = 1.0,    
             ))
 # training and testing settings
 train_cfg = dict(
@@ -117,7 +124,7 @@ lr_config = dict(
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
-    step=[4, 5])
+    step=[4, 6, 7])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -128,10 +135,10 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 6
+total_epochs = 8
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu'
-load_from = '/home/zhongying/research/repo/mmdetection/work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu_old/latest.pth'
+load_from = '/home/zhongying/research/repo/mmdetection/work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu_range_loss/latest.pth'
 resume_from = None
 workflow = [('train', 1)]
