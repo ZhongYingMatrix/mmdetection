@@ -57,6 +57,8 @@ class FCOS_Proto_Head(nn.Module):
                      type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0), 
                  conv_cfg=None,
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
+                 use_coord_conv=False,
+                 use_reg_feat_in_ctr=False,
                  use_crop_in_loss_mask=False,
                  use_ctr_size_weight=False,
                  loss_mask_factor = 1.0,
@@ -79,6 +81,10 @@ class FCOS_Proto_Head(nn.Module):
         self.norm_cfg = norm_cfg
         self.fp16_enabled = False
         self.radius = 1.5
+        self.use_coord_conv = use_coord_conv
+        if self.use_coord_conv:
+            self.in_channels += 2
+        self.use_reg_feat_in_ctr = use_reg_feat_in_ctr
         self.use_crop_in_loss_mask = use_crop_in_loss_mask
         self.use_ctr_size_weight = use_ctr_size_weight
         self.loss_mask_factor = loss_mask_factor
@@ -171,19 +177,25 @@ class FCOS_Proto_Head(nn.Module):
         )
 
     def forward_single(self, x, scale, feat_id):
+        if self.use_coord_conv:
+            x = self.coord_conv_cat(x)
         cls_feat = x
         reg_feat = x
 
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         cls_score = self.fcos_cls(cls_feat)
-        centerness = self.fcos_centerness(cls_feat)
 
         for reg_layer in self.reg_convs:
             reg_feat = reg_layer(reg_feat)
         # scale the bbox_pred of different level
         # float to avoid overflow when enabling FP16
         bbox_pred = scale(self.fcos_reg(reg_feat)).float().exp()
+
+        if self.use_reg_feat_in_ctr:
+            centerness = self.fcos_centerness(reg_feat)
+        else:
+            centerness = self.fcos_centerness(cls_feat)
 
         # ---------------------protonet---------------------------------------------------------
         coefficient = self.coefficient_conv(cls_feat).float().tanh()
@@ -793,3 +805,13 @@ class FCOS_Proto_Head(nn.Module):
         center_bbox = torch.stack((left, top, right, bottom), -1)
         inside_gt_bbox_mask = center_bbox.min(-1)[0] > 0  # 上下左右都>0 就是在bbox里面
         return inside_gt_bbox_mask
+
+    def coord_conv_cat(self, feat):
+        h, w = feat.shape[-2], feat.shape[-1]
+        dtype, device = feat.dtype, feat.device
+        x_range = torch.arange(-1, 1, 2/h, dtype=dtype, device=device)
+        y_range = torch.arange(-1, 1, 2/w, dtype=dtype, device=device)
+        x, y = torch.meshgrid(x_range, y_range)
+        coord_feat = torch.stack((x,y)).repeat(feat.shape[0],1,1,1)
+
+        return torch.cat((feat, coord_feat), dim=1)
