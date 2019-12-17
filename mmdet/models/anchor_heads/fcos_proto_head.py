@@ -472,7 +472,7 @@ class FCOS_Proto_Head(nn.Module):
         det_masks = det_coefficients.mm(flatten_prototype).reshape(
             det_coefficients.size(0), prototype.size(1), prototype.size(2))
         det_masks = det_masks.sigmoid()
-        det_masks = (det_masks>0.5).int().data.cpu().numpy().astype(np.uint8)
+        det_masks = det_masks.data.cpu().numpy().astype(np.float)
         masks_result = []
         for i in range(det_masks.shape[0]):
             #import pdb; pdb.set_trace()
@@ -485,6 +485,7 @@ class FCOS_Proto_Head(nn.Module):
             mask = mask[:int(img_shape[0]/4),:int(img_shape[1]/4)]
             mask = mmcv.imresize(mask, (ori_shape[1], ori_shape[0]))
             mask *= bbox_range
+            mask = (mask>0.5).astype(np.uint8)
             masks_result.append(mask)
         return masks_result
 

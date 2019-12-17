@@ -40,6 +40,8 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_mask=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        use_coord_conv=False,
+        use_reg_feat_in_ctr=False,
         use_crop_in_loss_mask=True,
         use_ctr_size_weight=True,
         loss_mask_factor = 2.0,

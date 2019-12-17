@@ -41,7 +41,7 @@ model = dict(
         loss_mask=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         use_coord_conv=True,
-        use_reg_feat_in_ctr=True,
+        use_reg_feat_in_ctr=False,
         use_crop_in_loss_mask=True,
         use_ctr_size_weight=True,
         loss_mask_factor = 2.0,
@@ -140,7 +140,7 @@ log_config = dict(
 total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/fcos_proto_r50_caffe_fpn_gn_coord_2x_4gpu'
+work_dir = './work_dirs/fcos_proto_r50_caffe_fpn_gn_coord_2x_4gpu_2rd'
 load_from = './work_dirs/fcos_proto_r50_caffe_fpn_gn_coord_2x_4gpu/latest.pth'
 resume_from = None
 workflow = [('train', 1)]
