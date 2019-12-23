@@ -17,22 +17,6 @@ INF = 1e8
 
 @HEADS.register_module
 class FCOS_Proto_Head(nn.Module):
-    """
-    Fully Convolutional One-Stage Object Detection head from [1]_.
-
-    The FCOS head does not use anchor boxes. Instead bounding boxes are
-    predicted at each pixel and a centerness measure is used to supress
-    low-quality predictions.
-
-    References:
-        .. [1] https://arxiv.org/abs/1904.01355
-
-    Example:
-        >>> self = FCOSHead(11, 7)
-        >>> feats = [torch.rand(1, 7, s, s) for s in [4, 8, 16, 32, 64]]
-        >>> cls_score, bbox_pred, centerness = self.forward(feats)
-        >>> assert len(cls_score) == len(self.scales)
-    """
 
     def __init__(self,
                  num_classes,
@@ -60,7 +44,8 @@ class FCOS_Proto_Head(nn.Module):
                  use_coord_conv=False,
                  use_reg_feat_in_ctr=False,
                  use_crop_in_loss_mask=False,
-                 use_ctr_size_weight=False,
+                 use_ctr_weight=False,
+                 use_edge_weight=False,
                  loss_mask_factor = 1.0,
                  loss_centerness_factor = 1.0,
                  ):
@@ -86,7 +71,8 @@ class FCOS_Proto_Head(nn.Module):
             self.in_channels += 2
         self.use_reg_feat_in_ctr = use_reg_feat_in_ctr
         self.use_crop_in_loss_mask = use_crop_in_loss_mask
-        self.use_ctr_size_weight = use_ctr_size_weight
+        self.use_ctr_weight = use_ctr_weight
+        self.use_edge_weight = use_edge_weight
         self.loss_mask_factor = loss_mask_factor
         self.loss_centerness_factor = loss_centerness_factor
 
@@ -314,7 +300,8 @@ class FCOS_Proto_Head(nn.Module):
 
         pos_gt_ids = flatten_gt_ids[pos_inds]
         which_img = which_img[pos_gt_ids.long()-1]            
-        flatten_img_protomasks, flatten_img_gt_masks, flatten_img_weights = [], [], []
+        #flatten_img_protomasks, flatten_img_gt_masks, flatten_img_weights = [], [], []
+        loss_mask = 0
         for img_id in range(prototypes.size(0)):
             flatten_img_prototypes = prototypes[img_id].reshape(16,-1)
             img_mask_range = mask_range[which_img == img_id]
@@ -325,34 +312,46 @@ class FCOS_Proto_Head(nn.Module):
                 _ctr = img_centerness_targets[mask_id]
                 if self.use_crop_in_loss_mask:
                     _range = img_mask_range[mask_id]
-                    img_protomask = img_protomasks[mask_id][_range[1]:_range[3], _range[0]:_range[2]]
-                    img_gt_mask = img_gt_masks[mask_id][_range[1]:_range[3], _range[0]:_range[2]]
+                    img_protomask = img_protomasks[mask_id][_range[1]:_range[3]+1, _range[0]:_range[2]+1]
+                    img_gt_mask = img_gt_masks[mask_id][_range[1]:_range[3]+1, _range[0]:_range[2]+1]
                 else:
                     img_protomask = img_protomasks[mask_id]
                     img_gt_mask = img_gt_masks[mask_id]
                 
-                flatten_img_protomasks.append(img_protomask.reshape(-1))
-                flatten_img_gt_masks.append(img_gt_mask.reshape(-1))
-                img_weights = torch.ones_like(img_gt_mask)*(_ctr/img_gt_mask.shape[0]/img_gt_mask.shape[1])
-                flatten_img_weights.append(img_weights.reshape(-1))
-        flatten_img_protomasks = torch.cat(flatten_img_protomasks)
-        flatten_img_gt_masks = torch.cat(flatten_img_gt_masks)
-        flatten_img_weights = torch.cat(flatten_img_weights)
-        flatten_img_weights *= (flatten_img_weights.shape[0]/flatten_img_weights.sum())
-
-        if self.use_ctr_size_weight:
-            loss_mask = self.loss_mask(flatten_img_protomasks, flatten_img_gt_masks,
-                weight=flatten_img_weights)
-            intersection = (flatten_img_protomasks.sigmoid()*flatten_img_gt_masks*flatten_img_weights).sum()
-            union = (flatten_img_protomasks.sigmoid()*flatten_img_weights).sum() + \
-                (flatten_img_gt_masks*flatten_img_weights).sum()
-            loss_mask_dice = 1 - intersection*2/union
-            loss_mask += loss_mask_dice
+                #import pdb; pdb.set_trace()
+                loss_mask_dice = 1 - (img_protomask.reshape(-1).sigmoid()*img_gt_mask.reshape(-1)).sum()*2 \
+                    /(img_protomask.reshape(-1).sigmoid().sum()+img_gt_mask.reshape(-1).sum())
+                if self.use_ctr_weight:
+                    loss_mask += loss_mask_dice * _ctr
+                else:
+                    loss_mask += loss_mask_dice
+   
+        if self.use_ctr_weight:
+            loss_mask /= pos_centerness_targets.sum()
         else:
-            loss_mask = self.loss_mask(flatten_img_protomasks, flatten_img_gt_masks)
-            loss_mask_dice = 1 - (flatten_img_protomasks.sigmoid()*flatten_img_gt_masks).sum()*2 \
-                /(flatten_img_protomasks.sigmoid().sum()+flatten_img_gt_masks.sum())
-            loss_mask += loss_mask_dice
+            loss_mask /= pos_centerness_targets.shape[0]
+                #flatten_img_protomasks.append(img_protomask.reshape(-1))
+                #flatten_img_gt_masks.append(img_gt_mask.reshape(-1))
+                #img_weights = torch.ones_like(img_gt_mask)*(_ctr/img_gt_mask.shape[0]/img_gt_mask.shape[1])
+                #flatten_img_weights.append(img_weights.reshape(-1))
+        # flatten_img_protomasks = torch.cat(flatten_img_protomasks)
+        # flatten_img_gt_masks = torch.cat(flatten_img_gt_masks)
+        # flatten_img_weights = torch.cat(flatten_img_weights)
+        # flatten_img_weights *= (flatten_img_weights.shape[0]/flatten_img_weights.sum())
+
+        # if self.use_ctr_size_weight:
+        #     loss_mask = self.loss_mask(flatten_img_protomasks, flatten_img_gt_masks,
+        #         weight=flatten_img_weights)
+        #     intersection = (flatten_img_protomasks.sigmoid()*flatten_img_gt_masks*flatten_img_weights).sum()
+        #     union = (flatten_img_protomasks.sigmoid()*flatten_img_weights).sum() + \
+        #         (flatten_img_gt_masks*flatten_img_weights).sum()
+        #     loss_mask_dice = 1 - intersection*2/union
+        #     loss_mask += loss_mask_dice
+        # else:
+        #     loss_mask = self.loss_mask(flatten_img_protomasks, flatten_img_gt_masks)
+        #     loss_mask_dice = 1 - (flatten_img_protomasks.sigmoid()*flatten_img_gt_masks).sum()*2 \
+        #         /(flatten_img_protomasks.sigmoid().sum()+flatten_img_gt_masks.sum())
+        #     loss_mask += loss_mask_dice
 
         return dict(
             loss_cls=loss_cls,
@@ -484,7 +483,8 @@ class FCOS_Proto_Head(nn.Module):
             # mask = mask[:img_shape[0],:img_shape[1]]
             mask = mask[:int(img_shape[0]/4),:int(img_shape[1]/4)]
             mask = mmcv.imresize(mask, (ori_shape[1], ori_shape[0]))
-            mask *= bbox_range
+            # TODO
+            #mask *= bbox_range
             mask = (mask>0.5).astype(np.uint8)
             masks_result.append(mask)
         return masks_result

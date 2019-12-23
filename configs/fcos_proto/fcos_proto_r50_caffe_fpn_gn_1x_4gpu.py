@@ -40,11 +40,11 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_mask=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        use_coord_conv=False,
-        use_reg_feat_in_ctr=False,
-        use_crop_in_loss_mask=True,
-        use_ctr_size_weight=True,
-        loss_mask_factor = 2.0,
+        use_coord_conv=True,
+        use_reg_feat_in_ctr=True,
+        use_crop_in_loss_mask=False,#True,
+        use_ctr_weight=True,
+        loss_mask_factor = 1.0,
         loss_centerness_factor = 1.0,    
             ))
 # training and testing settings
@@ -95,8 +95,8 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    imgs_per_gpu=3,
-    workers_per_gpu=4,
+    imgs_per_gpu=4,
+    workers_per_gpu=5,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
@@ -120,13 +120,14 @@ optimizer = dict(
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
 optimizer_config = dict(grad_clip=None)
+#optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='step',
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
-    step=[4, 6, 7])
+    step=[8, 11])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -137,10 +138,10 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 8
+total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu'
-load_from = '/home/zhongying/research/repo/mmdetection/work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu_range_loss/latest.pth'
-resume_from = None
+load_from = None
+resume_from = './work_dirs/fcos_proto_r50_caffe_fpn_gn_1x_4gpu/epoch_4.pth'
 workflow = [('train', 1)]
