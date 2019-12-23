@@ -4,8 +4,9 @@ from .grid_head import GridHead
 from .htc_mask_head import HTCMaskHead
 from .maskiou_head import MaskIoUHead
 from .papmask_head import PAPMask_Head
+from .solo_head import SOLO_Head
 
 __all__ = [
     'FCNMaskHead', 'HTCMaskHead', 'FusedSemanticHead', 'GridHead',
-    'MaskIoUHead', 'PAPMask_Head'
+    'MaskIoUHead', 'PAPMask_Head', 'SOLO_Head'
 ]
