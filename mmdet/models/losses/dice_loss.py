@@ -6,6 +6,8 @@ from .utils import weight_reduce_loss
 
 @LOSSES.register_module
 class DiceLoss(nn.Module):
+    """pred should have sigmoid
+    """
 
     def __init__(self):
         super(DiceLoss, self).__init__()
@@ -14,7 +16,7 @@ class DiceLoss(nn.Module):
                 pred,
                 target,
                 weight=None):
-        flatten_pred = pred.reshape(-1).sigmoid()
+        flatten_pred = pred.reshape(-1)
         flatten_target = target.reshape(-1)
         if weight is not None:
             flatten_pred *= weight.reshape(-1)
