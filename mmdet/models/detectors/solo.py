@@ -52,7 +52,6 @@ class SOLO(BaseDetector):
                       gt_bboxes_ignore=None):
         x = self.extract_feat(img)
         outs = self.mask_head(x)
-        import pdb; pdb.set_trace()
         loss_inputs = outs + (gt_bboxes, gt_masks, gt_labels, img_metas, self.train_cfg)
         losses = self.mask_head.loss(*loss_inputs)
         return losses

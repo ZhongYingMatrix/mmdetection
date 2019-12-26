@@ -34,6 +34,7 @@ model = dict(
         grid_number=[40, 36, 24, 16, 12],
         instance_scale=((-1, 96), (48, 192), (96, 384), (192, 768),
                                  (384, INF)),
+        scale_factor=0.2,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,

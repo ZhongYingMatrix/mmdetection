@@ -6,6 +6,8 @@ from ..builder import build_loss
 from ..registry import HEADS
 from ..utils import ConvModule, Scale, bias_init_with_prob, build_norm_layer
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
+import cv2
+
 INF = 1e8
 
 @HEADS.register_module
@@ -20,6 +22,7 @@ class SOLO_Head(nn.Module):
                  grid_number=[40, 36, 24, 16, 12],
                  instance_scale=((-1, 96), (48, 192), (96, 384), (192, 768),
                                           (384, INF)),
+                 scale_factor=0.2,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -38,9 +41,11 @@ class SOLO_Head(nn.Module):
         self.strides = strides
         self.grid_number = grid_number
         self.instance_scale = instance_scale
+        self.scale_factor = scale_factor
         self.loss_factor = loss_factor
         self.loss_cls = build_loss(loss_cls)
         self.loss_mask = build_loss(loss_mask)
+        self.fp16_enabled = False
 
         self._init_layers()
 
@@ -128,6 +133,50 @@ class SOLO_Head(nn.Module):
         
         return cls_score, mask_pred
 
+    @force_fp32(apply_to=('cls_scores', 'mask_preds'))
+    def loss(self,
+             cls_scores,
+             mask_preds,
+             gt_bboxes,
+             gt_masks,
+             gt_labels,
+             img_metas,
+             cfg):
+        assert len(cls_scores)==len(mask_preds)
+        all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
+                                           mask_preds[0].device)
+        self.num_points_per_level = [i.size()[0] for i in all_level_points]                                           
+        labels, gt_ids = self.solo_target(all_level_points, gt_bboxes, 
+            gt_masks, gt_labels)
+        
+        # DEBUG
+        tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
+        torch.save(tmp, 'demo/tmp/solo_positive.pth')
+        import pdb; pdb.set_trace()
+        return None
+
+
+
+    def get_points(self, p2_shape, dtype, device):
+        h, w = p2_shape
+        h, w = h*4, w*4
+        mlvl_points = []
+        for grid_num in self.grid_number:
+            mlvl_points.append(
+                self.get_points_single(grid_num, h, w,
+                                       dtype, device))
+        return mlvl_points
+
+    def get_points_single(self, grid_num, h, w, dtype, device):
+        x_range = torch.arange(
+            0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num/2
+        y_range = torch.arange(
+            0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num/2
+        y, x = torch.meshgrid(y_range, x_range)
+        points = torch.stack(
+            (x.reshape(-1), y.reshape(-1)), dim=-1)
+        return points
+
 
     def coord_conv_cat(self, feat):
         h, w = feat.shape[-2], feat.shape[-1]
@@ -139,3 +188,103 @@ class SOLO_Head(nn.Module):
 
         return torch.cat((feat, coord_feat), dim=1)
 
+    def solo_target(self, points, gt_bboxes_list, gt_masks_list, gt_labels_list):
+        assert len(points) == len(self.instance_scale)
+        num_levels = len(points)
+        # expand regress ranges to align with points
+        expanded_scale_ranges = [
+            points[i].new_tensor(self.instance_scale[i])[None].expand_as(
+                points[i]) for i in range(num_levels)
+        ]
+        # concat all levels points and regress ranges
+        concat_scale_ranges = torch.cat(expanded_scale_ranges, dim=0)
+        concat_points = torch.cat(points, dim=0)
+        # get labels and bbox_targets of each image
+        labels_list, ids_list = multi_apply(
+            self.solo_target_single,
+            gt_bboxes_list,
+            gt_masks_list,
+            gt_labels_list,
+            points=concat_points,
+            scale_ranges=concat_scale_ranges)
+
+        # accumulate img ids for mask assign
+        for img_id in range(1, len(ids_list)):
+            ids_list[img_id][ids_list[img_id]!=0] += ids_list[img_id-1].max()
+
+        # split to per img, per level
+        num_points = [center.size(0) for center in points]
+        labels_list = [labels.split(num_points, 0) for labels in labels_list]
+        ids_list = [ids.split(num_points, 0) for ids in ids_list]
+
+        # concat per level image
+        concat_lvl_labels = []
+        concat_lvl_ids = []
+        for i in range(num_levels):
+            concat_lvl_labels.append(
+                torch.cat([labels[i] for labels in labels_list]))
+            concat_lvl_ids.append(
+                torch.cat(
+                    [ids[i] for ids in ids_list]))
+
+        return concat_lvl_labels, concat_lvl_ids
+        
+    def solo_target_single(self, gt_bboxes, gt_masks, gt_labels, points, scale_ranges):
+        num_points = points.size(0)
+        num_gts = gt_labels.size(0)
+        if num_gts == 0:
+            return gt_labels.new_zeros(num_points), \
+                   gt_bboxes.new_zeros((num_points, 4))
+        
+        # caculate mass center
+        mask_centers = []
+        for mask in gt_masks:
+            M = cv2.moments(mask)
+            x, y = M['m10']/M['m00'], M['m01']/M['m00'] 
+            mask_centers.append([x,y])
+        mask_centers = torch.Tensor(mask_centers).float().to(gt_bboxes.device)
+        mask_centers = mask_centers[None].expand(num_points, num_gts, 2)
+
+        # area for ambiguous sample
+        areas = (gt_bboxes[:, 2] - gt_bboxes[:, 0] + 1) * (
+            gt_bboxes[:, 3] - gt_bboxes[:, 1] + 1)
+        areas = areas[None].repeat(num_points, 1)
+        scale_ranges = scale_ranges[:, None, :].expand(
+            num_points, num_gts, 2)    
+        gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
+
+        # long edge as scale
+        w = gt_bboxes[..., 2] - gt_bboxes[..., 0]
+        h = gt_bboxes[..., 3] - gt_bboxes[..., 1]
+        scales = torch.stack((w, h), -1).max(-1)[0]
+        inside_scale_range = (
+            scales >= scale_ranges[..., 0]) & (
+            scales <= scale_ranges[..., 1])
+
+        # center region
+        xs, ys = points[:, 0], points[:, 1]
+        xs = xs[:, None].expand(num_points, num_gts)
+        ys = ys[:, None].expand(num_points, num_gts)
+        left =  mask_centers[..., 0] \
+            - (mask_centers[..., 0] - gt_bboxes[..., 0]) * self.scale_factor
+        right =  mask_centers[..., 0] \
+            + (gt_bboxes[..., 2] - mask_centers[..., 0]) * self.scale_factor
+        top =  mask_centers[..., 1] \
+            - (mask_centers[..., 1] - gt_bboxes[..., 1]) * self.scale_factor
+        bottom =  mask_centers[..., 1] \
+            + (gt_bboxes[..., 3] - mask_centers[..., 1]) * self.scale_factor
+        #center_region = torch.stack((left, top, right, bottom), -1)
+        inside_center_region = (xs > left) & (xs < right) & (ys > top) & (ys < bottom)
+
+        areas[inside_center_region == 0] = INF
+        areas[inside_scale_range == 0] = INF
+        min_area, min_area_inds = areas.min(dim=1)
+
+        labels = gt_labels[min_area_inds]
+        labels[min_area == INF] = 0         
+        ids = min_area_inds + 1
+        ids[min_area == INF] = 0
+
+        return labels, ids
+
+        
