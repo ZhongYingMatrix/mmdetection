@@ -1,7 +1,7 @@
 INF = 1e8
 
 # fp16 settings
-fp16 = dict(loss_scale=512.)
+#fp16 = dict(loss_scale=512.)
 
 # model settings
 model = dict(
@@ -42,7 +42,8 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
         loss_mask=dict(type='DiceLoss'),
-        loss_factor={'loss_cls':1., 'loss_mask':3.}
+        loss_factor={'loss_cls':1., 'loss_mask':3.},
+        debug=True
         ))
 # training and testing settings
 train_cfg = dict()
@@ -88,7 +89,7 @@ test_pipeline = [
 ]
 data = dict(
     imgs_per_gpu=4,
-    workers_per_gpu=5,
+    workers_per_gpu=4,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
@@ -117,8 +118,8 @@ optimizer_config = dict(grad_clip=None)
 # learning policy
 lr_config = dict(
     policy='step',
-    warmup='constant',
-    warmup_iters=500,
+    warmup='linear',
+    warmup_iters=1000,
     warmup_ratio=1.0 / 3,
     step=[27, 33])
 checkpoint_config = dict(interval=1)

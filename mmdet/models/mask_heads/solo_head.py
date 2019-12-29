@@ -31,7 +31,8 @@ class SOLO_Head(nn.Module):
                      alpha=0.25,
                      loss_weight=1.0),
                  loss_mask=dict(type='DiceLoss'),
-                 loss_factor={'loss_cls':1., 'loss_mask':3.}):
+                 loss_factor={'loss_cls':1., 'loss_mask':3.},
+                 debug=False):
         super(SOLO_Head, self).__init__()
 
         self.num_classes = num_classes
@@ -44,6 +45,7 @@ class SOLO_Head(nn.Module):
         self.instance_scale = instance_scale
         self.scale_factor = scale_factor
         self.loss_factor = loss_factor
+        self.debug = debug
         self.loss_cls = build_loss(loss_cls)
         self.loss_mask = build_loss(loss_mask)
         self.fp16_enabled = False
@@ -76,6 +78,12 @@ class SOLO_Head(nn.Module):
                     3,
                     stride=1,
                     padding=1))
+        self.mask_2x_convs = ConvModule(
+                self.feat_channels,
+                self.feat_channels,
+                3,
+                stride=1,
+                padding=1)
 
         for i in range(len(self.strides)):
             self.cls_out_lvls_conv.append(
@@ -99,6 +107,7 @@ class SOLO_Head(nn.Module):
             normal_init(m.conv, std=0.01)
         for m in self.mask_convs:
             normal_init(m.conv, std=0.01)
+        normal_init(self.mask_2x_convs.conv, std=0.01)
 
         bias_cls = bias_init_with_prob(0.01)
         for m in self.cls_out_lvls_conv:
@@ -132,6 +141,7 @@ class SOLO_Head(nn.Module):
         for mask_layer in self.mask_convs:
             mask_feat = mask_layer(mask_feat)
         mask_feat = F.interpolate(mask_feat, scale_factor=2, mode='nearest')
+        mask_feat = self.mask_2x_convs(mask_feat)
         mask_pred = mask_out_conv(mask_feat)
         
         return cls_score, mask_pred
@@ -146,6 +156,9 @@ class SOLO_Head(nn.Module):
              img_metas,
              cfg):
         assert len(cls_scores)==len(mask_preds)
+        # DEBUG
+        self.img_metas = img_metas
+
         all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
                                            mask_preds[0].device)
         self.num_points_per_level = [i.size()[0] for i in all_level_points]                                           
@@ -187,8 +200,11 @@ class SOLO_Head(nn.Module):
             lvl, grid_x, grid_y = grid_assign
             mask_target = new_gt_masks[lvl][gt_ids-1]
             mask_pred = mask_preds[lvl][img_id][grid_x].sigmoid() * \
-                mask_preds[lvl][img_id][grid_x].sigmoid()
-            loss_mask += self.loss_mask(mask_pred, mask_target)
+                mask_preds[lvl][img_id][grid_y].sigmoid()
+            if not self.debug:
+                loss_mask += self.loss_mask(mask_pred, mask_target)
+            else:
+                loss_mask += F.binary_cross_entropy(mask_pred, mask_target.float())
         loss_mask /= pos_gt_ids.shape[0]
 
         # DEBUG
@@ -290,9 +306,15 @@ class SOLO_Head(nn.Module):
         
         # caculate mass center
         mask_centers = []
-        for mask in gt_masks:
+        for i, mask in enumerate(gt_masks):
             M = cv2.moments(mask)
-            x, y = M['m10']/M['m00'], M['m01']/M['m00'] 
+            try:
+                x, y = M['m10']/M['m00'], M['m01']/M['m00'] 
+            except ZeroDivisionError:
+                x, y = ((gt_bboxes[i,0]+gt_bboxes[i,2])/2).tolist() , \
+                    ((gt_bboxes[i,1]+gt_bboxes[i,3])/2).tolist()
+                print('img_metas:', self.img_metas, '\n', 'gt_bboxes:', gt_bboxes[i])
+            
             mask_centers.append([x,y])
         mask_centers = torch.Tensor(mask_centers).float().to(gt_bboxes.device)
         mask_centers = mask_centers[None].expand(num_points, num_gts, 2)
