@@ -137,5 +137,5 @@ dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu'
 load_from = None
-resume_from = None
+resume_from = 'work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu/latest.pth'
 workflow = [('train', 1)]

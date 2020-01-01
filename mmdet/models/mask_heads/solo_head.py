@@ -78,12 +78,12 @@ class SOLO_Head(nn.Module):
                     3,
                     stride=1,
                     padding=1))
-        self.mask_2x_convs = ConvModule(
-                self.feat_channels,
-                self.feat_channels,
-                3,
-                stride=1,
-                padding=1)
+        # self.mask_2x_convs = ConvModule(
+        #         self.feat_channels,
+        #         self.feat_channels,
+        #         3,
+        #         stride=1,
+        #         padding=1)
 
         for i in range(len(self.strides)):
             self.cls_out_lvls_conv.append(
@@ -107,7 +107,7 @@ class SOLO_Head(nn.Module):
             normal_init(m.conv, std=0.01)
         for m in self.mask_convs:
             normal_init(m.conv, std=0.01)
-        normal_init(self.mask_2x_convs.conv, std=0.01)
+        # normal_init(self.mask_2x_convs.conv, std=0.01)
 
         bias_cls = bias_init_with_prob(0.01)
         for m in self.cls_out_lvls_conv:
@@ -141,7 +141,7 @@ class SOLO_Head(nn.Module):
         for mask_layer in self.mask_convs:
             mask_feat = mask_layer(mask_feat)
         mask_feat = F.interpolate(mask_feat, scale_factor=2, mode='nearest')
-        mask_feat = self.mask_2x_convs(mask_feat)
+        # mask_feat = self.mask_2x_convs(mask_feat)
         mask_pred = mask_out_conv(mask_feat)
         
         return cls_score, mask_pred
@@ -196,6 +196,7 @@ class SOLO_Head(nn.Module):
         pos_grid_assign = flatten_grid_assign[pos_inds]
         
         loss_mask = 0
+        if self.debug: loss_mask_bce = 0
         for grid_assign, gt_ids, img_id in zip(pos_grid_assign, pos_gt_ids, which_img):
             lvl, grid_x, grid_y = grid_assign
             mask_target = new_gt_masks[lvl][gt_ids-1]
@@ -204,8 +205,16 @@ class SOLO_Head(nn.Module):
             if not self.debug:
                 loss_mask += self.loss_mask(mask_pred, mask_target)
             else:
-                loss_mask += F.binary_cross_entropy(mask_pred, mask_target.float())
+                loss_mask += self.loss_mask(mask_pred, mask_target)
+                loss_mask_bce += F.binary_cross_entropy(mask_pred, mask_target.float())
         loss_mask /= pos_gt_ids.shape[0]
+        if self.debug:
+            loss_mask_bce /= pos_gt_ids.shape[0]
+            return dict(
+                loss_cls=loss_cls * self.loss_factor['loss_cls'],
+                loss_mask=loss_mask * self.loss_factor['loss_mask'],
+                loss_mask_bce=loss_mask_bce * self.loss_factor['loss_mask']
+                )
 
         # DEBUG
         # tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
