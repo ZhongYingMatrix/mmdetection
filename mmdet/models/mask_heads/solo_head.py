@@ -236,7 +236,7 @@ class SOLO_Head(nn.Module):
 
     def get_points(self, p2_shape, dtype, device):
         h, w = p2_shape
-        h, w = h*4, w*4
+        h, w = h*4, w*4 # img shape
         mlvl_points = []
         for grid_num in self.grid_number:
             mlvl_points.append(
@@ -392,3 +392,140 @@ class SOLO_Head(nn.Module):
                 new_gt_masks[i].append(_gt_masks)
             new_gt_masks[i] = torch.cat(new_gt_masks[i])
         return which_img, new_gt_masks
+
+    @force_fp32(apply_to=('cls_scores', 'mask_preds'))
+    def get_masks(self,
+                  cls_scores,
+                  mask_preds,
+                  img_metas,
+                  cfg,
+                  rescale=None):
+        assert len(cls_scores) == len(mask_preds)
+        # reshape to same shape
+        _, _, b_h, b_w = mask_preds[0].shape
+        for i in range(len(mask_preds) ):
+            mask_preds[i] = F.upsample_bilinear(mask_preds[i],(b_h,b_w))
+
+        num_levels = len(cls_scores)
+        result_list = []
+        for img_id in range(len(img_metas)):
+            cls_score_list = [
+                cls_scores[i][img_id].detach() for i in range(num_levels)
+            ]
+            mask_pred_list = [
+                mask_preds[i][img_id].detach() for i in range(num_levels)
+            ]
+            img_shape = img_metas[img_id]['img_shape']
+            scale_factor = img_metas[img_id]['scale_factor']
+            ori_shape = img_metas[img_id]['ori_shape']
+            det_results = self.get_masks_single(cls_score_list, mask_pred_list,
+                                              img_shape,
+                                              ori_shape,
+                                              scale_factor, cfg, rescale)
+            result_list.append(det_results)
+        return result_list
+
+    def get_masks_single(self,
+                         cls_scores,
+                         mask_preds,
+                         img_shape,
+                         ori_shape,
+                         scale_factor,
+                         cfg,
+                         rescale=False):
+        assert len(cls_scores) == len(mask_preds) == len(self.grid_assign)
+        mlvl_scores = []
+        mlvl_masks = []
+        for cls_score, grid_assign_lvl, mask_pred in zip(
+            cls_scores, self.grid_assign, mask_preds):
+            scores = cls_score.permute(1, 2, 0).reshape(
+                -1, self.cls_out_channels).sigmoid()
+            grid_assign_lvl = torch.tensor(grid_assign_lvl)
+            nms_pre = cfg.get('nms_pre', -1)
+            if nms_pre > 0 and scores.shape[0] > nms_pre:
+                max_scores, _ = scores.max(dim=1)
+                _, topk_inds = max_scores.topk(nms_pre)
+                scores = scores[topk_inds, :]
+                grid_assign_lvl = grid_assign_lvl[topk_inds, :]
+            # score threshold
+            score_thr = cfg.get('score_thr', -1)
+            if score_thr > 0:
+                thr_mask = scores.max(dim=1)[0]>score_thr
+                scores = scores[thr_mask,:]
+                grid_assign_lvl = grid_assign_lvl[thr_mask]
+            mask_pred = mask_pred.sigmoid()
+            mask_lvl = mask_pred[grid_assign_lvl[:,1]] * \
+                mask_pred[grid_assign_lvl[:,2]]
+            mlvl_scores.append(scores)
+            mlvl_masks.append(mask_lvl)
+        mlvl_scores = torch.cat(mlvl_scores)
+        mlvl_masks = torch.cat(mlvl_masks)
+        # reshape to original shape
+        mlvl_masks = F.upsample_bilinear(
+            mlvl_masks[None], (mlvl_masks.size(-2)*4, mlvl_masks.size(-1)*4))[0]
+        mlvl_masks = mlvl_masks[:, :img_shape[0], :img_shape[1]]
+        mlvl_masks = F.upsample_bilinear(
+            mlvl_masks[None], (ori_shape[0], ori_shape[1]))[0]
+        mlvl_masks = (mlvl_masks>0.5).int()
+        # remv empty masks 
+        mlvl_scores = mlvl_scores[mlvl_masks.sum(-1).sum(-1)>0]
+        mlvl_masks = mlvl_masks[mlvl_masks.sum(-1).sum(-1)>0]
+
+        det_labels, det_bboxes, det_masks = self.nms_test(
+            mlvl_scores, mlvl_masks, cfg.nms.iou_thr)
+        return det_labels, det_bboxes, det_masks
+
+    def nms_test(self, scores, masks, iou_thr):
+        scores, labels = scores.max(dim=1)
+        scores = scores.cpu().detach().numpy()
+        labels = labels.cpu().detach().numpy()
+        masks = masks.cpu().detach().numpy().astype(np.uint8)
+        det_labels, det_bboxes, det_masks = [], [], []
+        n = len(labels)
+        if n > 0:
+            masks_dict = {}
+            for i in range(n):
+                if labels[i] in masks_dict:
+                    masks_dict[labels[i]].append([masks[i],labels[i],scores[i]])
+                else:
+                    masks_dict[labels[i]] = [[masks[i],labels[i],scores[i]]]
+            
+            for masks in masks_dict.values():
+                if len(masks) == 1:
+                    det_masks.append(masks[0][0])
+                    det_labels.append(masks[0][1])
+                    det_bboxes.append(self.mask2bbox(masks[0][0], masks[0][2]))
+                else:
+                    while(len(masks)):
+                        best_mask = masks.pop(0)
+                        det_masks.append(best_mask[0])
+                        det_labels.append(best_mask[1])
+                        det_bboxes.append(self.mask2bbox(
+                            best_mask[0], best_mask[2]))
+                        j = 0
+                        for i in range(len(masks)):
+                            i -= j
+                            if self.iou_calc(best_mask[0], masks[i][0]) > iou_thr:
+                                masks.pop(i)
+                                j += 1
+        return det_labels, det_bboxes, det_masks
+
+    def mask2bbox(self, mask, scores):
+        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        x1, y1, x2, y2 = float('inf'), float('inf'), float('-inf'), float('-inf')
+        for contour in contours:
+            _x1, _y1, w, h = cv2.boundingRect(contour)
+            _x2, _y2 = _x1+w, _y1+h
+            x1, y1 = min(x1, _x1), min(y1, _y1)
+            x2, y2 = max(x2, _x2), max(y2, _y2)
+        return [x1, y1, x2, y2, scores]
+
+    def iou_calc(self,mask1,mask2):
+        m1 = mask1.astype(bool)
+        m2 = mask2.astype(bool)
+        overlap = m1*m2
+        union = m1+m2
+        iou = float(overlap.sum())+1/(float(union.sum())+1)
+        return iou
+            
+        
