@@ -57,7 +57,7 @@ class SOLO_Head(nn.Module):
     def _init_layers(self):
         self.cls_convs = nn.ModuleList()
         self.mask_convs = nn.ModuleList()
-        self.cls_out_lvls_conv = nn.ModuleList()
+        # self.cls_out_lvls_conv = nn.ModuleList()
         self.mask_out_lvls_conv = nn.ModuleList()
         self.cls_lvls_pooling = nn.ModuleList()
         
@@ -86,12 +86,12 @@ class SOLO_Head(nn.Module):
         #         padding=1)
 
         for i in range(len(self.strides)):
-            self.cls_out_lvls_conv.append(
-                nn.Conv2d(
-                    self.feat_channels,
-                    self.cls_out_channels, 
-                    1, 
-                    padding=0))
+            # self.cls_out_lvls_conv.append(
+            #     nn.Conv2d(
+            #         self.feat_channels,
+            #         self.cls_out_channels, 
+            #         1, 
+            #         padding=0))
             self.mask_out_lvls_conv.append(
                 nn.Conv2d(
                     self.feat_channels,
@@ -102,6 +102,12 @@ class SOLO_Head(nn.Module):
                 nn.AdaptiveAvgPool2d(self.grid_number[i])
             )
 
+        self.cls_out_conv = nn.Conv2d(
+                    self.feat_channels,
+                    self.cls_out_channels, 
+                    3, 
+                    padding=1)
+
     def init_weights(self):
         for m in self.cls_convs:
             normal_init(m.conv, std=0.01)
@@ -110,17 +116,19 @@ class SOLO_Head(nn.Module):
         # normal_init(self.mask_2x_convs.conv, std=0.01)
 
         bias_cls = bias_init_with_prob(0.01)
-        for m in self.cls_out_lvls_conv:
-            normal_init(m, std=0.01, bias=bias_cls)
+        # for m in self.cls_out_lvls_conv:
+        #     normal_init(m, std=0.01, bias=bias_cls)
         for m in self.mask_out_lvls_conv:
             normal_init(m, std=0.01)
+
+        normal_init(self.cls_out_conv, std=0.01)
 
     def forward(self, feats):
         return multi_apply(
             self.forward_single, 
             feats, 
             self.cls_lvls_pooling,
-            self.cls_out_lvls_conv, 
+            # self.cls_out_lvls_conv, 
             self.mask_out_lvls_conv,
             self.grid_number
         )
@@ -128,7 +136,7 @@ class SOLO_Head(nn.Module):
     def forward_single(self, 
                        x, 
                        cls_pooling, 
-                       cls_out_conv, 
+                       # cls_out_conv, 
                        mask_out_conv, 
                        grid_num):
         cls_feat = cls_pooling(x)
@@ -136,7 +144,7 @@ class SOLO_Head(nn.Module):
 
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
-        cls_score = cls_out_conv(cls_feat)
+        cls_score = self.cls_out_conv(cls_feat)
 
         for mask_layer in self.mask_convs:
             mask_feat = mask_layer(mask_feat)
@@ -159,10 +167,13 @@ class SOLO_Head(nn.Module):
         # DEBUG
         self.img_metas = img_metas
 
-        all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
+        # all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
+        #                                    mask_preds[0].device)
+        all_level_grids = self.get_grids(mask_preds[0].size()[-2:], mask_preds[0].dtype,
                                            mask_preds[0].device)
-        self.num_points_per_level = [i.size()[0] for i in all_level_points]                                           
-        labels, gt_ids = self.solo_target(all_level_points, gt_bboxes, 
+        # labels, gt_ids = self.solo_target(all_level_points, gt_bboxes, 
+        #     gt_masks, gt_labels)
+        labels, gt_ids = self.solo_target(all_level_grids, gt_bboxes, 
             gt_masks, gt_labels)
         which_img, new_gt_masks = self.prepare_mask(gt_masks,
                                                     cls_scores[0].device,
@@ -234,25 +245,50 @@ class SOLO_Head(nn.Module):
             mlvl_grid_assign.append(grid_assign)
         return mlvl_grid_assign
 
-    def get_points(self, p2_shape, dtype, device):
+    # def get_points(self, p2_shape, dtype, device):
+    #     h, w = p2_shape
+    #     h, w = h*4, w*4 # img shape
+    #     mlvl_points = []
+    #     for grid_num in self.grid_number:
+    #         mlvl_points.append(
+    #             self.get_points_single(grid_num, h, w,
+    #                                    dtype, device))
+    #     return mlvl_points
+
+    # def get_points_single(self, grid_num, h, w, dtype, device):
+    #     x_range = torch.arange(
+    #         0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num/2
+    #     y_range = torch.arange(
+    #         0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num/2
+    #     y, x = torch.meshgrid(y_range, x_range)
+    #     points = torch.stack(
+    #         (x.reshape(-1), y.reshape(-1)), dim=-1)
+    #     return points
+
+    def get_grids(self, p2_shape, dtype, device):
         h, w = p2_shape
         h, w = h*4, w*4 # img shape
-        mlvl_points = []
+        mlvl_grids = []
         for grid_num in self.grid_number:
-            mlvl_points.append(
-                self.get_points_single(grid_num, h, w,
+            mlvl_grids.append(
+                self.get_grids_single(grid_num, h, w,
                                        dtype, device))
-        return mlvl_points
+        return mlvl_grids
 
-    def get_points_single(self, grid_num, h, w, dtype, device):
+    def get_grids_single(self, grid_num, h, w, dtype, device):
         x_range = torch.arange(
-            0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num/2
+            0, w, w/grid_num, dtype=dtype, device=device)
         y_range = torch.arange(
-            0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num/2
+            0, h, h/grid_num, dtype=dtype, device=device)
         y, x = torch.meshgrid(y_range, x_range)
-        points = torch.stack(
-            (x.reshape(-1), y.reshape(-1)), dim=-1)
-        return points
+        x2_range = torch.arange(
+            0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num
+        y2_range = torch.arange(
+            0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num
+        y2, x2 = torch.meshgrid(y2_range, x2_range)
+        grids = torch.stack(
+            (x.reshape(-1), y.reshape(-1), x2.reshape(-1), y2.reshape(-1)), dim=-1)
+        return grids
 
 
     def coord_conv_cat(self, feat):
@@ -269,9 +305,13 @@ class SOLO_Head(nn.Module):
         assert len(points) == len(self.instance_scale)
         num_levels = len(points)
         # expand regress ranges to align with points
+        # expanded_scale_ranges = [
+        #     points[i].new_tensor(self.instance_scale[i])[None].expand_as(
+        #         points[i]) for i in range(num_levels)
+        # ]
         expanded_scale_ranges = [
             points[i].new_tensor(self.instance_scale[i])[None].expand_as(
-                points[i]) for i in range(num_levels)
+                points[i][:,:2]) for i in range(num_levels)
         ]
         # concat all levels points and regress ranges
         concat_scale_ranges = torch.cat(expanded_scale_ranges, dim=0)
@@ -350,6 +390,9 @@ class SOLO_Head(nn.Module):
         xs, ys = points[:, 0], points[:, 1]
         xs = xs[:, None].expand(num_points, num_gts)
         ys = ys[:, None].expand(num_points, num_gts)
+        x2s, y2s = points[:, 2], points[:, 3]
+        x2s = x2s[:, None].expand(num_points, num_gts)
+        y2s = y2s[:, None].expand(num_points, num_gts)
         left =  mask_centers[..., 0] \
             - (mask_centers[..., 0] - gt_bboxes[..., 0]) * self.scale_factor
         right =  mask_centers[..., 0] \
@@ -359,7 +402,10 @@ class SOLO_Head(nn.Module):
         bottom =  mask_centers[..., 1] \
             + (gt_bboxes[..., 3] - mask_centers[..., 1]) * self.scale_factor
         #center_region = torch.stack((left, top, right, bottom), -1)
-        inside_center_region = (xs > left) & (xs < right) & (ys > top) & (ys < bottom)
+        # inside_center_region = (x2s > left) & (xs < right) & (ys > top) & (ys < bottom)
+        inside_center_region = ((right+left-x2s-xs).abs() <= x2s-xs + right-left) & \
+            ((bottom+top-y2s-ys).abs() <= y2s-ys + bottom-top)
+        
 
         areas[inside_center_region == 0] = INF
         areas[inside_scale_range == 0] = INF

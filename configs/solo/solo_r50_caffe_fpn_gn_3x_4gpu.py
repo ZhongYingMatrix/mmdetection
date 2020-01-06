@@ -108,13 +108,13 @@ data = dict(
 # optimizer
 optimizer = dict(
     type='SGD',
-    lr=0.01,
+    lr=0.01/4,
     momentum=0.9,
     weight_decay=0.0001,
     #paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.)
     )
-optimizer_config = dict(grad_clip=None)
-#optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+#optimizer_config = dict(grad_clip=None)
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 # learning policy
 lr_config = dict(
     policy='step',
@@ -137,5 +137,5 @@ dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu'
 load_from = None
-resume_from = 'work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu/latest.pth'
+resume_from = None
 workflow = [('train', 1)]
