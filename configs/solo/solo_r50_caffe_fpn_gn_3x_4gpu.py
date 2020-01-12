@@ -43,7 +43,7 @@ model = dict(
             loss_weight=1.0),
         loss_mask=dict(type='DiceLoss'),
         loss_factor={'loss_cls':1., 'loss_mask':3.},
-        debug=True
+        debug=False
         ))
 # training and testing settings
 train_cfg = dict()
@@ -108,7 +108,7 @@ data = dict(
 # optimizer
 optimizer = dict(
     type='SGD',
-    lr=0.01/4,
+    lr=0.01/2,
     momentum=0.9,
     weight_decay=0.0001,
     #paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.)
@@ -121,7 +121,7 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=1000,
     warmup_ratio=1.0 / 3,
-    step=[27, 33])
+    step=[20, 26])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -132,10 +132,10 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-total_epochs = 36
+total_epochs = 29
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu'
-load_from = None
-resume_from = '/home/zhongying/research/repo/mmdetection/work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu/latest.pth'
+resume_from = None
+load_from = '/home/zhongying/research/repo/mmdetection/work_dirs/solo_r50_caffe_fpn_gn_3x_4gpu/latest.pth'
 workflow = [('train', 1)]

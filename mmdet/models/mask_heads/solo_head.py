@@ -175,6 +175,11 @@ class SOLO_Head(nn.Module):
         #     gt_masks, gt_labels)
         labels, gt_ids = self.solo_target(all_level_grids, gt_bboxes, 
             gt_masks, gt_labels)
+        # DEBUG
+        # tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
+        # torch.save(tmp, 'demo/tmp/solo_positive.pth')
+        # import pdb; pdb.set_trace()
+
         which_img, new_gt_masks = self.prepare_mask(gt_masks,
                                                     cls_scores[0].device,
                                                     mask_preds[0].shape)
@@ -219,6 +224,8 @@ class SOLO_Head(nn.Module):
                 loss_mask += self.loss_mask(mask_pred, mask_target)
                 loss_mask_bce += F.binary_cross_entropy(mask_pred, mask_target.float())
         loss_mask /= pos_gt_ids.shape[0]
+
+        
         if self.debug:
             loss_mask_bce /= pos_gt_ids.shape[0]
             return dict(
@@ -226,11 +233,6 @@ class SOLO_Head(nn.Module):
                 loss_mask=loss_mask * self.loss_factor['loss_mask'],
                 loss_mask_bce=loss_mask_bce * self.loss_factor['loss_mask']
                 )
-
-        # DEBUG
-        # tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
-        # torch.save(tmp, 'demo/tmp/solo_positive.pth')
-        # import pdb; pdb.set_trace()
         return dict(
             loss_cls=loss_cls * self.loss_factor['loss_cls'],
             loss_mask=loss_mask * self.loss_factor['loss_mask']
@@ -245,25 +247,25 @@ class SOLO_Head(nn.Module):
             mlvl_grid_assign.append(grid_assign)
         return mlvl_grid_assign
 
-    # def get_points(self, p2_shape, dtype, device):
-    #     h, w = p2_shape
-    #     h, w = h*4, w*4 # img shape
-    #     mlvl_points = []
-    #     for grid_num in self.grid_number:
-    #         mlvl_points.append(
-    #             self.get_points_single(grid_num, h, w,
-    #                                    dtype, device))
-    #     return mlvl_points
+    def get_points(self, p2_shape, dtype, device):
+        h, w = p2_shape
+        h, w = h*4, w*4 # img shape
+        mlvl_points = []
+        for grid_num in self.grid_number:
+            mlvl_points.append(
+                self.get_points_single(grid_num, h, w,
+                                       dtype, device))
+        return mlvl_points
 
-    # def get_points_single(self, grid_num, h, w, dtype, device):
-    #     x_range = torch.arange(
-    #         0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num/2
-    #     y_range = torch.arange(
-    #         0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num/2
-    #     y, x = torch.meshgrid(y_range, x_range)
-    #     points = torch.stack(
-    #         (x.reshape(-1), y.reshape(-1)), dim=-1)
-    #     return points
+    def get_points_single(self, grid_num, h, w, dtype, device):
+        x_range = torch.arange(
+            0, w, w/grid_num, dtype=dtype, device=device) + w/grid_num/2
+        y_range = torch.arange(
+            0, h, h/grid_num, dtype=dtype, device=device) + h/grid_num/2
+        y, x = torch.meshgrid(y_range, x_range)
+        points = torch.stack(
+            (x.reshape(-1), y.reshape(-1)), dim=-1)
+        return points
 
     def get_grids(self, p2_shape, dtype, device):
         h, w = p2_shape
