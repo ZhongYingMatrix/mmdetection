@@ -19,7 +19,7 @@ class SOLO_Head(nn.Module):
                  in_channels=256,
                  stacked_convs=7,
                  feat_channels=256,
-                 strides=[8, 16, 32, 64, 128],
+                 strides=[4, 8, 16, 32, 64],
                  grid_number=[40, 36, 24, 16, 12],
                  instance_scale=((-1, 96), (48, 192), (96, 384), (192, 768),
                                           (384, INF)),
@@ -57,7 +57,6 @@ class SOLO_Head(nn.Module):
     def _init_layers(self):
         self.cls_convs = nn.ModuleList()
         self.mask_convs = nn.ModuleList()
-        # self.cls_out_lvls_conv = nn.ModuleList()
         self.mask_out_lvls_conv = nn.ModuleList()
         self.cls_lvls_pooling = nn.ModuleList()
         
@@ -78,20 +77,8 @@ class SOLO_Head(nn.Module):
                     3,
                     stride=1,
                     padding=1))
-        # self.mask_2x_convs = ConvModule(
-        #         self.feat_channels,
-        #         self.feat_channels,
-        #         3,
-        #         stride=1,
-        #         padding=1)
 
         for i in range(len(self.strides)):
-            # self.cls_out_lvls_conv.append(
-            #     nn.Conv2d(
-            #         self.feat_channels,
-            #         self.cls_out_channels, 
-            #         1, 
-            #         padding=0))
             self.mask_out_lvls_conv.append(
                 nn.Conv2d(
                     self.feat_channels,
@@ -113,11 +100,7 @@ class SOLO_Head(nn.Module):
             normal_init(m.conv, std=0.01)
         for m in self.mask_convs:
             normal_init(m.conv, std=0.01)
-        # normal_init(self.mask_2x_convs.conv, std=0.01)
-
         bias_cls = bias_init_with_prob(0.01)
-        # for m in self.cls_out_lvls_conv:
-        #     normal_init(m, std=0.01, bias=bias_cls)
         for m in self.mask_out_lvls_conv:
             normal_init(m, std=0.01)
 
@@ -128,7 +111,6 @@ class SOLO_Head(nn.Module):
             self.forward_single, 
             feats, 
             self.cls_lvls_pooling,
-            # self.cls_out_lvls_conv, 
             self.mask_out_lvls_conv,
             self.grid_number
         )
@@ -136,7 +118,6 @@ class SOLO_Head(nn.Module):
     def forward_single(self, 
                        x, 
                        cls_pooling, 
-                       # cls_out_conv, 
                        mask_out_conv, 
                        grid_num):
         cls_feat = cls_pooling(x)
@@ -149,7 +130,6 @@ class SOLO_Head(nn.Module):
         for mask_layer in self.mask_convs:
             mask_feat = mask_layer(mask_feat)
         mask_feat = F.interpolate(mask_feat, scale_factor=2, mode='nearest')
-        # mask_feat = self.mask_2x_convs(mask_feat)
         mask_pred = mask_out_conv(mask_feat)
         
         return cls_score, mask_pred
@@ -171,8 +151,6 @@ class SOLO_Head(nn.Module):
         #                                    mask_preds[0].device)
         all_level_grids = self.get_grids(mask_preds[0].size()[-2:], mask_preds[0].dtype,
                                            mask_preds[0].device)
-        # labels, gt_ids = self.solo_target(all_level_points, gt_bboxes, 
-        #     gt_masks, gt_labels)
         labels, gt_ids = self.solo_target(all_level_grids, gt_bboxes, 
             gt_masks, gt_labels)
         # DEBUG
