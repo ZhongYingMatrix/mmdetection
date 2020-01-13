@@ -189,13 +189,19 @@ class SOLO_Head(nn.Module):
             device=mask_preds[0].device)
         pos_grid_assign = flatten_grid_assign[pos_inds]
         
+        # loss mask reshape mask preds
+        _, _, b_h, b_w = mask_preds[0].shape
+        #b_h, b_w = int(b_h*self.strides[0]/2), int(b_w*self.strides[0]/2)
+        for i in range(5):
+            mask_preds[i] = F.sigmoid(F.upsample_bilinear(mask_preds[i],(b_h,b_w)))
+        
         loss_mask = 0
         if self.debug: loss_mask_bce = 0
         for grid_assign, gt_ids, img_id in zip(pos_grid_assign, pos_gt_ids, which_img):
             lvl, grid_x, grid_y = grid_assign
-            mask_target = new_gt_masks[lvl][gt_ids-1]
-            mask_pred = mask_preds[lvl][img_id][grid_x].sigmoid() * \
-                mask_preds[lvl][img_id][grid_y].sigmoid()
+            mask_target = new_gt_masks[gt_ids-1]
+            mask_pred = mask_preds[lvl][img_id][grid_x] * \
+                mask_preds[lvl][img_id][grid_y]
             if not self.debug:
                 loss_mask += self.loss_mask(mask_pred, mask_target)
             else:
@@ -404,19 +410,34 @@ class SOLO_Head(nn.Module):
             num = _gt_masks.shape[0]
             which_img += [img_num]*num
         which_img = torch.tensor(which_img).to(device)
-        new_gt_masks = [[] for i in range(5)] # multi level
-        for i in range(5):
-            for _gt_masks in gt_masks:  
-                _gt_masks = [cv2.resize(gt_mask, (0,0), \
-                     fx=1./2**(i+2), fy=1./2**(i+2)) for gt_mask in _gt_masks]
-                _gt_masks = [np.pad(gt_mask,
-                             ((0, int(p2_shape[2]/2**i) - gt_mask.shape[0]), 
-                             (0, int(p2_shape[3]/2**i) - gt_mask.shape[1])))
-                             for gt_mask in _gt_masks]
-                _gt_masks = np.stack(_gt_masks)
-                _gt_masks = torch.from_numpy(_gt_masks).to(device)    
-                new_gt_masks[i].append(_gt_masks)
-            new_gt_masks[i] = torch.cat(new_gt_masks[i])
+        # new_gt_masks = [[] for i in range(5)] # multi level
+        # for i in range(5):
+        #     for _gt_masks in gt_masks:  
+        #         _gt_masks = [cv2.resize(gt_mask, (0,0), \
+        #              fx=1./2**(i+2), fy=1./2**(i+2)) for gt_mask in _gt_masks]
+        #         _gt_masks = [np.pad(gt_mask,
+        #                      ((0, int(p2_shape[2]/2**i) - gt_mask.shape[0]), 
+        #                      (0, int(p2_shape[3]/2**i) - gt_mask.shape[1])))
+        #                      for gt_mask in _gt_masks]
+        #         _gt_masks = np.stack(_gt_masks)
+        #         _gt_masks = torch.from_numpy(_gt_masks).to(device)    
+        #         new_gt_masks[i].append(_gt_masks)
+        #     new_gt_masks[i] = torch.cat(new_gt_masks[i])
+        new_gt_masks = []
+        for _gt_masks in gt_masks:  
+            # float to get smooth edge
+            _gt_masks = [cv2.resize(gt_mask.astype(float), (0,0), \
+                      fx=2./self.strides[0], fy=2./self.strides[0]) for gt_mask in _gt_masks]
+            _gt_masks = [np.pad(gt_mask,
+                            # ((0, int(p2_shape[2]*self.strides[0]/2) - gt_mask.shape[0]), 
+                            # (0, int(p2_shape[3]*self.strides[0]/2) - gt_mask.shape[1])))
+                            ((0, p2_shape[2] - gt_mask.shape[0]), 
+                            (0, p2_shape[3] - gt_mask.shape[1])))
+                            for gt_mask in _gt_masks]
+            _gt_masks = np.stack(_gt_masks)
+            _gt_masks = torch.from_numpy(_gt_masks).to(device)    
+            new_gt_masks.append(_gt_masks)
+        new_gt_masks = torch.cat(new_gt_masks)
         return which_img, new_gt_masks
 
     @force_fp32(apply_to=('cls_scores', 'mask_preds'))

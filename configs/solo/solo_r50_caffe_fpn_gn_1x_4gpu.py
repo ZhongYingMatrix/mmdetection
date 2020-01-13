@@ -39,7 +39,7 @@ model = dict(
             loss_weight=1.0),
         loss_mask=dict(type='DiceLoss'),
         loss_factor={'loss_cls':1., 'loss_mask':3.},
-        debug=True
+        debug=False
         ))
 # training and testing settings
 train_cfg = dict()
