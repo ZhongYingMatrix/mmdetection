@@ -451,7 +451,7 @@ class SOLO_Head(nn.Module):
         # reshape to same shape
         _, _, b_h, b_w = mask_preds[0].shape
         for i in range(len(mask_preds) ):
-            mask_preds[i] = F.upsample_bilinear(mask_preds[i],(b_h,b_w))
+            mask_preds[i] = F.sigmoid(F.upsample_bilinear(mask_preds[i],(b_h,b_w)))
 
         num_levels = len(cls_scores)
         result_list = []
@@ -500,7 +500,6 @@ class SOLO_Head(nn.Module):
                 thr_mask = scores.max(dim=1)[0]>score_thr
                 scores = scores[thr_mask,:]
                 grid_assign_lvl = grid_assign_lvl[thr_mask]
-            mask_pred = mask_pred.sigmoid()
             mask_lvl = mask_pred[grid_assign_lvl[:,1]] * \
                 mask_pred[grid_assign_lvl[:,2]]
             mlvl_scores.append(scores)
@@ -509,7 +508,9 @@ class SOLO_Head(nn.Module):
         mlvl_masks = torch.cat(mlvl_masks)
         # reshape to original shape
         mlvl_masks = F.upsample_bilinear(
-            mlvl_masks[None], (mlvl_masks.size(-2)*4, mlvl_masks.size(-1)*4))[0]
+            mlvl_masks[None],
+            (int(mlvl_masks.size(-2)*self.strides[0]/2),
+            int(mlvl_masks.size(-1)*self.strides[0]/2)))[0]
         mlvl_masks = mlvl_masks[:, :img_shape[0], :img_shape[1]]
         mlvl_masks = F.upsample_bilinear(
             mlvl_masks[None], (ori_shape[0], ori_shape[1]))[0]
