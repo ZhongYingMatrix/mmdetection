@@ -147,16 +147,16 @@ class SOLO_Head(nn.Module):
         # DEBUG
         self.img_metas = img_metas
 
-        # all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
-        #                                    mask_preds[0].device)
+        all_level_points = self.get_points(mask_preds[0].size()[-2:], mask_preds[0].dtype,
+                                           mask_preds[0].device)
         all_level_grids = self.get_grids(mask_preds[0].size()[-2:], mask_preds[0].dtype,
                                            mask_preds[0].device)
         labels, gt_ids = self.solo_target(all_level_grids, gt_bboxes, 
             gt_masks, gt_labels)
         # DEBUG
-        # tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
-        # torch.save(tmp, 'demo/tmp/solo_positive.pth')
-        # import pdb; pdb.set_trace()
+        tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
+        torch.save(tmp, 'demo/tmp/solo_positive.pth')
+        import pdb; pdb.set_trace()
 
         which_img, new_gt_masks = self.prepare_mask(gt_masks,
                                                     cls_scores[0].device,
@@ -202,7 +202,7 @@ class SOLO_Head(nn.Module):
             mask_target = new_gt_masks[gt_ids-1]
             mask_pred = mask_preds[lvl][img_id][grid_x] * \
                 mask_preds[lvl][img_id][grid_y]
-            import pdb; pdb.set_trace()
+            #import pdb; pdb.set_trace()
             if not self.debug:
                 loss_mask += self.loss_mask(mask_pred, mask_target)
             else:

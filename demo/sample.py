@@ -12,26 +12,38 @@ import torch.nn.functional as F
 
 tmp = torch.load('demo/tmp/solo_positive.pth')
 all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels = tmp
-import pdb; pdb.set_trace()
+img_num = 2
+img_idx = 0
+#import pdb; pdb.set_trace()
 
-img1 = cv2.imread(img_metas[0]['filename'])
-img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-if img_metas[0]['flip']:
-    img1 = cv2.flip(img1, 1)
-ppp = []
+img = cv2.imread(img_metas[img_idx]['filename'])
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+if img_metas[img_idx]['flip']:
+    img = cv2.flip(img, 1)
+ids_dict = {}
 for i in range(5):
     p = all_level_points[i]
     l = labels[i]
-    pp = p[l.chunk(4, 0)[0]>0]
-    ppp.append(pp)
-ppp = torch.cat(ppp)
-ppp /= img_metas[0]['scale_factor']
-for p in ppp:
-    cv2.circle(img1, tuple(p.int().tolist()), 2, (0,255,0), 2)
-gb = gt_bboxes[0]/img_metas[0]['scale_factor']
-for b in gb:
-    x0, y0, x1, y1 = b.int().tolist()
-    img1 = cv2.rectangle(img1, (x0, y0), (x1, y1), (255, 0, 0), 1)
-plt.imshow(img1)
+    ids = gt_ids[i].chunk(img_num)[img_idx]
+    ids = ids[l.chunk(img_num, 0)[img_idx]>0]
+    pp = p[l.chunk(img_num, 0)[img_idx]>0]
+    for _id, _p in zip(ids, pp):
+        _id = _id.tolist()
+        _p /= img_metas[img_idx]['scale_factor']
+        _p = _p.tolist() 
+        if _id not in ids_dict:
+            ids_dict[_id] = [_p]
+        else:
+            ids_dict[_id].append(_p)
+
+for _id in ids_dict:
+    color = np.random.randint(0, 256, (1, 3), dtype=np.uint8)
+    color = tuple(color.tolist()[0])
+    for _p in ids_dict[_id]: 
+        cv2.circle(img, tuple(map(int, _p)), 1, color, 2)
+    x0, y0, x1, y1 = (gt_bboxes[img_idx]/img_metas[img_idx]['scale_factor'])[_id-1].int().tolist()
+    img = cv2.rectangle(img, (x0, y0), (x1, y1), color, 1)
+
+plt.imshow(img)
 
 plt.show()
