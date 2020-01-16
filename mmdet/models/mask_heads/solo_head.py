@@ -202,6 +202,7 @@ class SOLO_Head(nn.Module):
             mask_target = new_gt_masks[gt_ids-1]
             mask_pred = mask_preds[lvl][img_id][grid_x] * \
                 mask_preds[lvl][img_id][grid_y]
+            import pdb; pdb.set_trace()
             if not self.debug:
                 loss_mask += self.loss_mask(mask_pred, mask_target)
             else:
@@ -525,31 +526,34 @@ class SOLO_Head(nn.Module):
 
     def nms_test(self, scores, masks, iou_thr):
         scores, labels = scores.max(dim=1)
-        scores = scores.cpu().detach().numpy()
-        labels = labels.cpu().detach().numpy()
-        masks = masks.cpu().detach().numpy().astype(np.uint8)
+        # scores = scores.cpu().detach().numpy()
+        # labels = labels.cpu().detach().numpy()
+        # masks = masks.cpu().detach().numpy().astype(np.uint8)
         det_labels, det_bboxes, det_masks = [], [], []
         n = len(labels)
         if n > 0:
             masks_dict = {}
             for i in range(n):
                 if labels[i] in masks_dict:
-                    masks_dict[labels[i]].append([masks[i],labels[i],scores[i]])
+                    masks_dict[labels[i].item()].append([masks[i],labels[i],scores[i]])
                 else:
-                    masks_dict[labels[i]] = [[masks[i],labels[i],scores[i]]]
+                    masks_dict[labels[i].item()] = [[masks[i],labels[i],scores[i]]]
             
             for masks in masks_dict.values():
                 if len(masks) == 1:
-                    det_masks.append(masks[0][0])
+                    det_masks.append(masks[0][0].cpu().detach().numpy().astype(np.uint8))
                     det_labels.append(masks[0][1])
-                    det_bboxes.append(self.mask2bbox(masks[0][0], masks[0][2]))
+                    det_bboxes.append(self.mask2bbox(
+                        masks[0][0].cpu().detach().numpy().astype(np.uint8), 
+                        masks[0][2].cpu().detach().numpy()))
                 else:
                     while(len(masks)):
                         best_mask = masks.pop(0)
-                        det_masks.append(best_mask[0])
+                        det_masks.append(best_mask[0].cpu().detach().numpy().astype(np.uint8))
                         det_labels.append(best_mask[1])
                         det_bboxes.append(self.mask2bbox(
-                            best_mask[0], best_mask[2]))
+                            best_mask[0].cpu().detach().numpy().astype(np.uint8), 
+                            best_mask[2].cpu().detach().numpy()))
                         j = 0
                         for i in range(len(masks)):
                             i -= j
@@ -569,11 +573,9 @@ class SOLO_Head(nn.Module):
         return [x1, y1, x2, y2, scores]
 
     def iou_calc(self,mask1,mask2):
-        m1 = mask1.astype(bool)
-        m2 = mask2.astype(bool)
-        overlap = m1*m2
-        union = m1+m2
-        iou = float(overlap.sum())+1/(float(union.sum())+1)
+        overlap = mask1&mask2
+        union = mask1|mask2
+        iou = float(overlap.sum()+1)/float(union.sum()+1)
         return iou
             
         
