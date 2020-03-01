@@ -156,7 +156,7 @@ class SOLO_Head(nn.Module):
         # DEBUG
         tmp = [all_level_points, labels, gt_ids, img_metas, gt_bboxes, gt_masks, gt_labels]
         torch.save(tmp, 'demo/tmp/solo_positive.pth')
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
 
         which_img, new_gt_masks = self.prepare_mask(gt_masks,
                                                     cls_scores[0].device,
@@ -450,6 +450,7 @@ class SOLO_Head(nn.Module):
                   rescale=None):
         assert len(cls_scores) == len(mask_preds)
         # reshape to same shape
+        #import pdb; pdb.set_trace()
         _, _, b_h, b_w = mask_preds[0].shape
         for i in range(len(mask_preds) ):
             mask_preds[i] = F.sigmoid(F.upsample_bilinear(mask_preds[i],(b_h,b_w)))

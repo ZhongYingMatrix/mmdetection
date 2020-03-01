@@ -19,9 +19,10 @@ class DiceLoss(nn.Module):
                 weight=None):
         flatten_pred = pred.reshape(-1)
         flatten_target = target.reshape(-1)
+        #import pdb; pdb.set_trace()
         if weight is not None:
             flatten_pred *= weight.reshape(-1)
             flatten_target *= weight.reshape(-1)
         loss_dice = 1 - ((flatten_pred*flatten_target).sum()*2+self.smooth)/ \
-            (flatten_target.sum()+flatten_pred.sum()+self.smooth)
+            ((flatten_target*flatten_target).sum()+(flatten_pred*flatten_pred).sum()+self.smooth)
         return loss_dice

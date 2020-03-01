@@ -39,7 +39,7 @@ model = dict(
             loss_weight=1.0),
         loss_mask=dict(type='DiceLoss'),
         loss_factor={'loss_cls':1., 'loss_mask':3.},
-        debug=True
+        debug=False
         ))
 # training and testing settings
 train_cfg = dict()
@@ -133,5 +133,5 @@ dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/solo_r50_caffe_fpn_gn_1x_4gpu'
 resume_from = None
-load_from = None
+load_from = 'work_dirs/solo_r50_caffe_fpn_gn_1x_4gpu_old/latest.pth'
 workflow = [('train', 1)]
