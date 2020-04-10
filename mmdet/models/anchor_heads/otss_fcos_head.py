@@ -12,7 +12,7 @@ INF = 1e8
 
 
 @HEADS.register_module
-class FCOSHead(nn.Module):
+class OTSS_FCOSHead(nn.Module):
     """
     Fully Convolutional One-Stage Object Detection head from [1]_.
 
@@ -53,7 +53,7 @@ class FCOSHead(nn.Module):
                      loss_weight=1.0),
                  conv_cfg=None,
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True)):
-        super(FCOSHead, self).__init__()
+        super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
         self.cls_out_channels = num_classes - 1
