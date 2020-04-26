@@ -40,6 +40,7 @@ class OTSS_FCOSHead(nn.Module):
                                  (512, INF)),
                  center_sampling=False,
                  center_sample_radius=1.5,
+                 IoUtype = 'IoU',
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -70,6 +71,7 @@ class OTSS_FCOSHead(nn.Module):
         self.fp16_enabled = False
         self.center_sampling = center_sampling
         self.center_sample_radius = center_sample_radius
+        self.IoUtype = IoUtype
 
         self._init_layers()
 
@@ -149,6 +151,7 @@ class OTSS_FCOSHead(nn.Module):
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
         
+        # TODO inside bbox; soft weighted; dynamic threshold
         self.topk = 9
         candidate_idxs = [] # img * [lvl * idxs(9*nums_gt)]
         for gt_b in gt_bboxes:
@@ -196,14 +199,28 @@ class OTSS_FCOSHead(nn.Module):
             cls_lst_gt = torch.cat([cls_gt[None, ...] for cls_gt in cls_lst_gt])
             de_bbox_gt = torch.cat([db_gt[None, ...] for db_gt in de_bbox_gt])
             gt_bboxes_img = gt_bboxes[img_id][:, None, :].repeat(1, len(self.strides)*self.topk, 1)
-            from mmdet.core import bbox_overlaps
-            de_bbox_gt = bbox_overlaps(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4), 
-                is_aligned=True).clamp(min=1e-6).reshape(-1, len(self.strides)*self.topk)
+            from mmdet.core import bbox_overlaps        
+            if self.IoUtype == 'IoU':
+                de_bbox_gt = bbox_overlaps(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4), 
+                    is_aligned=True).clamp(min=1e-6).reshape(-1, len(self.strides)*self.topk)
+            elif self.IoUtype == 'DIoU':
+                _de_bbox_gt = self.DIoU(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4)
+                    ).reshape(-1, len(self.strides)*self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            else:
+                raise NotImplementedError
+
             scores = de_bbox_gt * cls_lst_gt.sigmoid()
             threshold = (scores.mean(dim=1) + scores.std(dim=1))[:, None].repeat(1, len(self.strides)*self.topk)
             keep_idxmask = (scores>=threshold)
-            loss_bbox -= de_bbox_gt[keep_idxmask].log().sum()
+            if self.IoUtype == 'IoU':
+                loss_bbox -= de_bbox_gt[keep_idxmask].log().sum()
+            elif self.IoUtype == 'DIoU':
+                loss_bbox += (1-_de_bbox_gt[keep_idxmask]).sum()
+            else:
+                raise NotImplementedError
             num_pos += keep_idxmask.sum()
+            # import pdb; pdb.set_trace()
 
             # cls
             keep_idxmask = keep_idxmask.permute(1,0).reshape(len(self.strides), self.topk, -1)
@@ -293,8 +310,10 @@ class OTSS_FCOSHead(nn.Module):
 
         return dict(
             loss_cls=loss_cls,
-            loss_bbox=loss_bbox,
-            loss_centerness=loss_centerness)
+            loss_bbox=loss_bbox
+        )
+            #,
+            #loss_centerness=loss_centerness)
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
@@ -353,7 +372,8 @@ class OTSS_FCOSHead(nn.Module):
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
-                max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                # max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                max_scores, _ = scores.max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 points = points[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
@@ -375,8 +395,10 @@ class OTSS_FCOSHead(nn.Module):
             mlvl_scores,
             cfg.score_thr,
             cfg.nms,
-            cfg.max_per_img,
-            score_factors=mlvl_centerness)
+            cfg.max_per_img
+        )
+            #,
+            #score_factors=mlvl_centerness)
         return det_bboxes, det_labels
 
     def get_points(self, featmap_sizes, dtype, device):
@@ -541,3 +563,39 @@ class OTSS_FCOSHead(nn.Module):
             left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
                 top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
         return torch.sqrt(centerness_targets)
+
+    def DIoU(self, pred, target, rescale=False, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose diag
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_diag = (enclose_wh[:, 0].pow(2) + enclose_wh[:, 1].pow(2)).sqrt()
+
+        # center distance
+        xp = (pred[:, 0] + pred[:, 2])/2
+        yp = (pred[:, 1] + pred[:, 3])/2
+        xg = (target[:, 0] + target[:, 2])/2
+        yg = (target[:, 1] + target[:, 3])/2
+        center_d = ((xp - xg).pow(2) + (yp - yg).pow(2)).sqrt()
+
+        # DIoU
+        dious = ious - center_d / enclose_diag
+
+        if rescale:
+            dious = (dious + 1)/2
+
+        return dious
