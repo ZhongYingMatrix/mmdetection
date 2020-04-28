@@ -148,95 +148,6 @@ class FCOSHead(nn.Module):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
-        
-        self.topk = 9
-        candidate_idxs = [] # img * [lvl * idxs(9*nums_gt)]
-        for gt_b in gt_bboxes:
-            candidate_idxs_img = []
-            gt_cx = (gt_b[:, 0] + gt_b[:, 2]) / 2.0
-            gt_cy = (gt_b[:, 1] + gt_b[:, 3]) / 2.0
-            gt_points = torch.stack((gt_cx, gt_cy), dim=1)
-            for lvl_points in all_level_points:
-                distances = (lvl_points[:, None, :] -
-                     gt_points[None, :, :]).pow(2).sum(-1).sqrt()
-                _, topk_idxs = distances.topk(
-                    self.topk, dim=0, largest=False)
-                candidate_idxs_img.append(topk_idxs)
-            candidate_idxs_img = torch.cat([idxs[None, ...]
-                for idxs in candidate_idxs_img])
-            candidate_idxs.append(candidate_idxs_img)
-        
-        loss_bbox = 0
-        num_pos = 0
-        cls_targets = [torch.zeros_like(cls_score) for cls_score in cls_scores]
-
-        num_imgs = cls_scores[0].size(0)
-        for img_id in range(num_imgs):
-            cls_lst = []
-            de_bbox_lst = []
-            for lvl_id in range(len(self.strides)):
-                flatten_cls_img_lvl = cls_scores[lvl_id][img_id].permute(
-                    1, 2, 0).reshape(
-                    -1, self.cls_out_channels)
-                flatten_bbox_img_lvl = bbox_preds[lvl_id][img_id].permute(
-                    1, 2, 0).reshape(-1, 4)
-                candidate_cls_img_lvl = flatten_cls_img_lvl[candidate_idxs[img_id][lvl_id] ,:]
-                candidate_bbox_img_lvl = flatten_bbox_img_lvl[candidate_idxs[img_id][lvl_id] ,:]
-                candidate_points_img_lvl = all_level_points[lvl_id][candidate_idxs[img_id][lvl_id] ,:]
-                candidate_decoded_bbox_img_lvl = distance2bbox(candidate_points_img_lvl.reshape(-1, 2), 
-                    candidate_bbox_img_lvl.reshape(-1, 4)).reshape(self.topk, -1, 4)
-                cls_lst.append(candidate_cls_img_lvl)
-                de_bbox_lst.append(candidate_decoded_bbox_img_lvl)
-            cls_lst_gt = [torch.cat([cls_lst[lvl_id][:, gt_id, gt_labels[img_id][gt_id]-1]
-                    for lvl_id in range(len(self.strides))], dim=0)
-                for gt_id in range(len(gt_bboxes[img_id]))]
-            de_bbox_gt = [torch.cat([de_bbox_lst[lvl_id][:, gt_id, :]
-                    for lvl_id in range(len(self.strides))], dim=0)
-                for gt_id in range(len(gt_bboxes[img_id]))]
-            cls_lst_gt = torch.cat([cls_gt[None, ...] for cls_gt in cls_lst_gt])
-            de_bbox_gt = torch.cat([db_gt[None, ...] for db_gt in de_bbox_gt])
-            gt_bboxes_img = gt_bboxes[img_id][:, None, :].repeat(1, len(self.strides)*self.topk, 1)
-            from mmdet.core import bbox_overlaps
-            de_bbox_gt = bbox_overlaps(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4), 
-                is_aligned=True).clamp(min=1e-6).reshape(-1, len(self.strides)*self.topk)
-            scores = de_bbox_gt * cls_lst_gt.sigmoid()
-            threshold = (scores.mean(dim=1) + scores.std(dim=1))[:, None].repeat(1, len(self.strides)*self.topk)
-            keep_idxmask = (scores>=threshold)
-            loss_bbox -= de_bbox_gt[keep_idxmask].log().sum()
-            num_pos += keep_idxmask.sum()
-
-            # cls
-            keep_idxmask = keep_idxmask.permute(1,0).reshape(len(self.strides), self.topk, -1)
-            for lvl_id in range(len(self.strides)):
-                keep_idxmask_lvl = keep_idxmask[lvl_id]
-                candidate_idxs_lvl = candidate_idxs[img_id][lvl_id][keep_idxmask_lvl]
-                gt_lables_lvl = gt_labels[img_id][None, :].repeat(self.topk, 1)[keep_idxmask_lvl]-1
-                cls_targets[lvl_id][img_id].view(
-                    self.cls_out_channels, -1)[gt_lables_lvl, candidate_idxs_lvl] = 1
-
-        loss_bbox /= num_pos
-        flatten_cls_scores = [
-            cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
-            for cls_score in cls_scores
-        ]
-        flatten_cls_targets = [
-            cls_target.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
-            for cls_target in cls_targets
-        ]
-        flatten_cls_scores = torch.cat(flatten_cls_scores)
-        flatten_cls_targets = torch.cat(flatten_cls_targets).long()
-        # loss_cls = self.loss_cls(
-        #     flatten_cls_scores, flatten_cls_targets,
-        #     avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
-        from mmdet.models.losses.focal_loss import py_sigmoid_focal_loss
-        loss_cls = py_sigmoid_focal_loss(
-            flatten_cls_scores, flatten_cls_targets,
-            avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
-        
-            
-
-
-
         labels, bbox_targets = self.fcos_target(all_level_points, gt_bboxes,
                                                 gt_labels)
 
@@ -265,9 +176,9 @@ class FCOSHead(nn.Module):
 
         pos_inds = flatten_labels.nonzero().reshape(-1)
         num_pos = len(pos_inds)
-        # loss_cls = self.loss_cls(
-        #     flatten_cls_scores, flatten_labels,
-        #     avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
+        loss_cls = self.loss_cls(
+            flatten_cls_scores, flatten_labels,
+            avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
 
         pos_bbox_preds = flatten_bbox_preds[pos_inds]
         pos_centerness = flatten_centerness[pos_inds]
@@ -280,11 +191,11 @@ class FCOSHead(nn.Module):
             pos_decoded_target_preds = distance2bbox(pos_points,
                                                      pos_bbox_targets)
             # centerness weighted iou loss
-            # loss_bbox = self.loss_bbox(
-            #     pos_decoded_bbox_preds,
-            #     pos_decoded_target_preds,
-            #     weight=pos_centerness_targets,
-            #     avg_factor=pos_centerness_targets.sum())
+            loss_bbox = self.loss_bbox(
+                pos_decoded_bbox_preds,
+                pos_decoded_target_preds,
+                weight=pos_centerness_targets,
+                avg_factor=pos_centerness_targets.sum())
             loss_centerness = self.loss_centerness(pos_centerness,
                                                    pos_centerness_targets)
         else:
