@@ -121,7 +121,9 @@ class FCOSHead(nn.Module):
         normal_init(self.fcos_centerness, std=0.01)
 
     def forward(self, feats):
-        return multi_apply(self.forward_single, feats, self.scales, self.strides)
+        return multi_apply(self.forward_single,
+                           feats, self.scales,
+                           self.strides)
 
     def forward_single(self, x, scale, stride):
         cls_feat = x

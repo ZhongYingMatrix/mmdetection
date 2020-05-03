@@ -40,8 +40,8 @@ class OTSS_FCOSHead(nn.Module):
                                  (512, INF)),
                  center_sampling=False,
                  center_sample_radius=1.5,
-                 IoUtype = 'IoU',
-                 loss_reweight = False,
+                 IoUtype='IoU',
+                 loss_reweight=False,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -152,10 +152,10 @@ class OTSS_FCOSHead(nn.Module):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
-        
+
         # TODO inside bbox; soft weighted; dynamic threshold
         self.topk = 9
-        candidate_idxs = [] # img * [lvl * idxs(9*nums_gt)]
+        candidate_idxs = []  # img * [lvl * idxs(9*nums_gt)]
         for gt_b in gt_bboxes:
             candidate_idxs_img = []
             gt_cx = (gt_b[:, 0] + gt_b[:, 2]) / 2.0
@@ -163,14 +163,13 @@ class OTSS_FCOSHead(nn.Module):
             gt_points = torch.stack((gt_cx, gt_cy), dim=1)
             for lvl_points in all_level_points:
                 distances = (lvl_points[:, None, :] -
-                     gt_points[None, :, :]).pow(2).sum(-1).sqrt()
-                _, topk_idxs = distances.topk(
-                    self.topk, dim=0, largest=False)
+                             gt_points[None, :, :]).pow(2).sum(-1).sqrt()
+                _, topk_idxs = distances.topk(self.topk, dim=0, largest=False)
                 candidate_idxs_img.append(topk_idxs)
-            candidate_idxs_img = torch.cat([idxs[None, ...]
-                for idxs in candidate_idxs_img])
+            candidate_idxs_img = torch.cat(
+                [idxs[None, ...] for idxs in candidate_idxs_img])
             candidate_idxs.append(candidate_idxs_img)
-        
+
         loss_bbox = 0
         num_pos = 0
         cls_targets = [torch.zeros_like(cls_score) for cls_score in cls_scores]
@@ -181,65 +180,99 @@ class OTSS_FCOSHead(nn.Module):
             de_bbox_lst = []
             for lvl_id in range(len(self.strides)):
                 flatten_cls_img_lvl = cls_scores[lvl_id][img_id].permute(
-                    1, 2, 0).reshape(
-                    -1, self.cls_out_channels)
+                    1, 2, 0).reshape(-1, self.cls_out_channels)
                 flatten_bbox_img_lvl = bbox_preds[lvl_id][img_id].permute(
                     1, 2, 0).reshape(-1, 4)
-                candidate_cls_img_lvl = flatten_cls_img_lvl[candidate_idxs[img_id][lvl_id] ,:]
-                candidate_bbox_img_lvl = flatten_bbox_img_lvl[candidate_idxs[img_id][lvl_id] ,:]
-                candidate_points_img_lvl = all_level_points[lvl_id][candidate_idxs[img_id][lvl_id] ,:]
-                candidate_decoded_bbox_img_lvl = distance2bbox(candidate_points_img_lvl.reshape(-1, 2), 
-                    candidate_bbox_img_lvl.reshape(-1, 4)).reshape(self.topk, -1, 4)
+                candidate_cls_img_lvl = flatten_cls_img_lvl[
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_bbox_img_lvl = flatten_bbox_img_lvl[
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_points_img_lvl = all_level_points[lvl_id][
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_decoded_bbox_img_lvl = distance2bbox(
+                    candidate_points_img_lvl.reshape(-1, 2),
+                    candidate_bbox_img_lvl.reshape(-1, 4)).reshape(
+                        self.topk, -1, 4)
                 cls_lst.append(candidate_cls_img_lvl)
                 de_bbox_lst.append(candidate_decoded_bbox_img_lvl)
-            cls_lst_gt = [torch.cat([cls_lst[lvl_id][:, gt_id, gt_labels[img_id][gt_id]-1]
-                    for lvl_id in range(len(self.strides))], dim=0)
-                for gt_id in range(len(gt_bboxes[img_id]))]
-            de_bbox_gt = [torch.cat([de_bbox_lst[lvl_id][:, gt_id, :]
-                    for lvl_id in range(len(self.strides))], dim=0)
-                for gt_id in range(len(gt_bboxes[img_id]))]
-            cls_lst_gt = torch.cat([cls_gt[None, ...] for cls_gt in cls_lst_gt])
+            cls_lst_gt = [
+                torch.cat([
+                    cls_lst[lvl_id][:, gt_id, gt_labels[img_id][gt_id] - 1]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            de_bbox_gt = [
+                torch.cat([
+                    de_bbox_lst[lvl_id][:, gt_id, :]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            cls_lst_gt = torch.cat(
+                [cls_gt[None, ...] for cls_gt in cls_lst_gt])
             de_bbox_gt = torch.cat([db_gt[None, ...] for db_gt in de_bbox_gt])
-            gt_bboxes_img = gt_bboxes[img_id][:, None, :].repeat(1, len(self.strides)*self.topk, 1)
-            from mmdet.core import bbox_overlaps        
+            gt_bboxes_img = gt_bboxes[img_id][:, None, :].repeat(
+                1,
+                len(self.strides) * self.topk, 1)
+            from mmdet.core import bbox_overlaps
             if self.IoUtype == 'IoU':
-                de_bbox_gt = bbox_overlaps(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4), 
-                    is_aligned=True).clamp(min=1e-6).reshape(-1, len(self.strides)*self.topk)
+                de_bbox_gt = bbox_overlaps(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4),
+                    is_aligned=True).clamp(min=1e-6).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
             elif self.IoUtype == 'DIoU':
-                _de_bbox_gt = self.DIoU(de_bbox_gt.reshape(-1, 4), gt_bboxes_img.reshape(-1, 4)
-                    ).reshape(-1, len(self.strides)*self.topk)
+                _de_bbox_gt = self.DIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
                 de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
             else:
                 raise NotImplementedError
 
             scores = (de_bbox_gt * cls_lst_gt.sigmoid()).detach()
-            threshold = (scores.mean(dim=1) + scores.std(dim=1))[:, None].repeat(1, len(self.strides)*self.topk)
-            keep_idxmask = (scores>=threshold)
+            threshold = (scores.mean(dim=1) +
+                         scores.std(dim=1))[:, None].repeat(
+                             1,
+                             len(self.strides) * self.topk)
+            keep_idxmask = (scores >= threshold)
             if self.loss_reweight:
-                max_margin = (scores.max(dim=1)[0]-scores.mean(dim=1))[:, None].repeat(1, 
-                    len(self.strides)*self.topk)
-                reweight_factor = ((scores-scores.mean(dim=1)[:, None].repeat(1, 
-                    len(self.strides)*self.topk))/max_margin)[keep_idxmask].sqrt()
+                max_margin = (scores.max(dim=1)[0] -
+                              scores.mean(dim=1))[:, None].repeat(
+                                  1,
+                                  len(self.strides) * self.topk)
+                reweight_factor = ((scores - scores.mean(
+                    dim=1)[:, None].repeat(
+                        1,
+                        len(self.strides) * self.topk)) /
+                            max_margin)[keep_idxmask].sqrt()
                 num_pos += reweight_factor.sum()
             else:
                 reweight_factor = 1
                 num_pos += keep_idxmask.sum()
             if self.IoUtype == 'IoU':
-                loss_bbox -= (de_bbox_gt[keep_idxmask].log()*reweight_factor).sum()
+                loss_bbox -= (de_bbox_gt[keep_idxmask].log() *
+                              reweight_factor).sum()
             elif self.IoUtype == 'DIoU':
-                loss_bbox += ((1-_de_bbox_gt[keep_idxmask])*reweight_factor).sum()
+                loss_bbox += ((1 - _de_bbox_gt[keep_idxmask]) *
+                              reweight_factor).sum()
             else:
                 raise NotImplementedError
             # import pdb; pdb.set_trace()
 
             # cls
-            keep_idxmask = keep_idxmask.permute(1,0).reshape(len(self.strides), self.topk, -1)
+            keep_idxmask = keep_idxmask.permute(1, 0).reshape(
+                len(self.strides), self.topk, -1)
             for lvl_id in range(len(self.strides)):
                 keep_idxmask_lvl = keep_idxmask[lvl_id]
-                candidate_idxs_lvl = candidate_idxs[img_id][lvl_id][keep_idxmask_lvl]
-                gt_lables_lvl = gt_labels[img_id][None, :].repeat(self.topk, 1)[keep_idxmask_lvl]-1
-                cls_targets[lvl_id][img_id].view(
-                    self.cls_out_channels, -1)[gt_lables_lvl, candidate_idxs_lvl] = 1
+                candidate_idxs_lvl = candidate_idxs[img_id][lvl_id][
+                    keep_idxmask_lvl]
+                gt_lables_lvl = gt_labels[img_id][None, :].repeat(
+                    self.topk, 1)[keep_idxmask_lvl] - 1
+                cls_targets[lvl_id][img_id].view(self.cls_out_channels,
+                                                 -1)[gt_lables_lvl,
+                                                     candidate_idxs_lvl] = 1
 
         loss_bbox /= num_pos
         flatten_cls_scores = [
@@ -257,12 +290,9 @@ class OTSS_FCOSHead(nn.Module):
         #     avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
         from mmdet.models.losses.focal_loss import py_sigmoid_focal_loss
         loss_cls = py_sigmoid_focal_loss(
-            flatten_cls_scores, flatten_cls_targets,
+            flatten_cls_scores,
+            flatten_cls_targets,
             avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
-        
-            
-
-
 
         labels, bbox_targets = self.fcos_target(all_level_points, gt_bboxes,
                                                 gt_labels)
@@ -318,12 +348,9 @@ class OTSS_FCOSHead(nn.Module):
             loss_bbox = pos_bbox_preds.sum()
             loss_centerness = pos_centerness.sum()
 
-        return dict(
-            loss_cls=loss_cls,
-            loss_bbox=loss_bbox
-        )
-            #,
-            #loss_centerness=loss_centerness)
+        return dict(loss_cls=loss_cls, loss_bbox=loss_bbox)
+        # ,
+        # loss_centerness=loss_centerness)
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
@@ -400,15 +427,11 @@ class OTSS_FCOSHead(nn.Module):
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
         mlvl_scores = torch.cat([padding, mlvl_scores], dim=1)
         mlvl_centerness = torch.cat(mlvl_centerness)
-        det_bboxes, det_labels = multiclass_nms(
-            mlvl_bboxes,
-            mlvl_scores,
-            cfg.score_thr,
-            cfg.nms,
-            cfg.max_per_img
-        )
-            #,
-            #score_factors=mlvl_centerness)
+        det_bboxes, det_labels = multiclass_nms(mlvl_bboxes, mlvl_scores,
+                                                cfg.score_thr, cfg.nms,
+                                                cfg.max_per_img)
+        # ,
+        # score_factors=mlvl_centerness)
         return det_bboxes, det_labels
 
     def get_points(self, featmap_sizes, dtype, device):
@@ -583,7 +606,8 @@ class OTSS_FCOSHead(nn.Module):
 
         # union
         ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
-        ag = (target[:, 2] - target[:, 0] + 1) * (target[:, 3] - target[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
         union = ap + ag - overlap + eps
 
         # IoU
@@ -593,19 +617,20 @@ class OTSS_FCOSHead(nn.Module):
         enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
         enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
         enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
-        enclose_diag = (enclose_wh[:, 0].pow(2) + enclose_wh[:, 1].pow(2)).sqrt()
+        enclose_diag = (enclose_wh[:, 0].pow(2) +
+                        enclose_wh[:, 1].pow(2)).sqrt()
 
         # center distance
-        xp = (pred[:, 0] + pred[:, 2])/2
-        yp = (pred[:, 1] + pred[:, 3])/2
-        xg = (target[:, 0] + target[:, 2])/2
-        yg = (target[:, 1] + target[:, 3])/2
+        xp = (pred[:, 0] + pred[:, 2]) / 2
+        yp = (pred[:, 1] + pred[:, 3]) / 2
+        xg = (target[:, 0] + target[:, 2]) / 2
+        yg = (target[:, 1] + target[:, 3]) / 2
         center_d = ((xp - xg).pow(2) + (yp - yg).pow(2)).sqrt()
 
         # DIoU
         dious = ious - center_d / enclose_diag
 
         if rescale:
-            dious = (dious + 1)/2
+            dious = (dious + 1) / 2
 
         return dious
