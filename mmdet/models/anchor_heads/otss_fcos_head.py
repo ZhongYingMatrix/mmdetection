@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
@@ -54,7 +55,8 @@ class OTSS_FCOSHead(nn.Module):
                      use_sigmoid=True,
                      loss_weight=1.0),
                  conv_cfg=None,
-                 norm_cfg=dict(type='GN', num_groups=32, requires_grad=True)):
+                 norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
+                 reg_norm=False):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -74,6 +76,7 @@ class OTSS_FCOSHead(nn.Module):
         self.center_sample_radius = center_sample_radius
         self.IoUtype = IoUtype
         self.loss_reweight = loss_reweight
+        self.reg_norm = reg_norm
 
         self._init_layers()
 
@@ -120,9 +123,11 @@ class OTSS_FCOSHead(nn.Module):
         normal_init(self.fcos_centerness, std=0.01)
 
     def forward(self, feats):
-        return multi_apply(self.forward_single, feats, self.scales)
+        return multi_apply(self.forward_single,
+                           feats, self.scales,
+                           self.strides)
 
-    def forward_single(self, x, scale):
+    def forward_single(self, x, scale, stride):
         cls_feat = x
         reg_feat = x
 
@@ -135,7 +140,10 @@ class OTSS_FCOSHead(nn.Module):
             reg_feat = reg_layer(reg_feat)
         # scale the bbox_pred of different level
         # float to avoid overflow when enabling FP16
-        bbox_pred = scale(self.fcos_reg(reg_feat)).float().exp()
+        if self.reg_norm:
+            bbox_pred = F.relu(scale(self.fcos_reg(reg_feat)).float()) * stride
+        else:
+            bbox_pred = scale(self.fcos_reg(reg_feat)).float().exp()
         return cls_score, bbox_pred, centerness
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
