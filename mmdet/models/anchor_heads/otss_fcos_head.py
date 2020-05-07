@@ -56,7 +56,9 @@ class OTSS_FCOSHead(nn.Module):
                      loss_weight=1.0),
                  conv_cfg=None,
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
-                 reg_norm=False):
+                 reg_norm=False,
+                 ctr_on_reg=False,
+                 use_centerness=False):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -77,6 +79,8 @@ class OTSS_FCOSHead(nn.Module):
         self.IoUtype = IoUtype
         self.loss_reweight = loss_reweight
         self.reg_norm = reg_norm
+        self.ctr_on_reg = ctr_on_reg
+        self.use_centerness = use_centerness
 
         self._init_layers()
 
@@ -123,8 +127,7 @@ class OTSS_FCOSHead(nn.Module):
         normal_init(self.fcos_centerness, std=0.01)
 
     def forward(self, feats):
-        return multi_apply(self.forward_single,
-                           feats, self.scales,
+        return multi_apply(self.forward_single, feats, self.scales,
                            self.strides)
 
     def forward_single(self, x, scale, stride):
@@ -134,10 +137,14 @@ class OTSS_FCOSHead(nn.Module):
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         cls_score = self.fcos_cls(cls_feat)
-        centerness = self.fcos_centerness(cls_feat)
 
         for reg_layer in self.reg_convs:
             reg_feat = reg_layer(reg_feat)
+
+        if self.ctr_on_reg:
+            centerness = self.fcos_centerness(reg_feat)
+        else:
+            centerness = self.fcos_centerness(cls_feat)
         # scale the bbox_pred of different level
         # float to avoid overflow when enabling FP16
         if self.reg_norm:
@@ -598,11 +605,13 @@ class OTSS_FCOSHead(nn.Module):
 
     def centerness_target(self, pos_bbox_targets):
         # only calculate pos centerness targets, otherwise there may be nan
+        # modify nan to 0
         left_right = pos_bbox_targets[:, [0, 2]]
         top_bottom = pos_bbox_targets[:, [1, 3]]
         centerness_targets = (
             left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
                 top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+        centerness_targets = centerness_targets.clamp(min=0)
         return torch.sqrt(centerness_targets)
 
     def DIoU(self, pred, target, rescale=False, eps=1e-7):
