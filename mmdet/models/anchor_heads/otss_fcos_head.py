@@ -42,7 +42,6 @@ class OTSS_FCOSHead(nn.Module):
                  center_sampling=False,
                  center_sample_radius=1.5,
                  IoUtype='IoU',
-                 loss_reweight=False,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -77,7 +76,6 @@ class OTSS_FCOSHead(nn.Module):
         self.center_sampling = center_sampling
         self.center_sample_radius = center_sample_radius
         self.IoUtype = IoUtype
-        self.loss_reweight = loss_reweight
         self.reg_norm = reg_norm
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
@@ -252,28 +250,13 @@ class OTSS_FCOSHead(nn.Module):
                              1,
                              len(self.strides) * self.topk)
             keep_idxmask = (scores >= threshold)
-            if self.loss_reweight:
-                max_margin = (scores.max(dim=1)[0] -
-                              scores.mean(dim=1))[:, None].repeat(
-                                  1,
-                                  len(self.strides) * self.topk)
-                reweight_factor = ((scores - scores.mean(
-                    dim=1)[:, None].repeat(
-                        1,
-                        len(self.strides) * self.topk)) /
-                            max_margin)[keep_idxmask].sqrt()
-                num_pos += reweight_factor.sum()
-            else:
-                reweight_factor = 1
-                num_pos += keep_idxmask.sum()
             if self.IoUtype == 'IoU':
-                loss_bbox -= (de_bbox_gt[keep_idxmask].log() *
-                              reweight_factor).sum()
+                loss_bbox -= de_bbox_gt[keep_idxmask].log().sum()
             elif self.IoUtype == 'DIoU':
-                loss_bbox += ((1 - _de_bbox_gt[keep_idxmask]) *
-                              reweight_factor).sum()
+                loss_bbox += (1-_de_bbox_gt[keep_idxmask]).sum()
             else:
                 raise NotImplementedError
+            num_pos += keep_idxmask.sum()
             # import pdb; pdb.set_trace()
 
             # cls

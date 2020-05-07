@@ -28,7 +28,6 @@ model = dict(
         strides=[8, 16, 32, 64, 128],
         IoUtype='DIoU',
         reg_norm=True,
-        loss_reweight=False,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
