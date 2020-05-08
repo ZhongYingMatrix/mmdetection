@@ -20,12 +20,15 @@ model = dict(
         num_outs=5,
         relu_before_extra_convs=True),
     bbox_head=dict(
-        type='FCOSHead',
+        type='OTSS_FCOSHead',
         num_classes=81,
         in_channels=256,
         stacked_convs=4,
         feat_channels=256,
         strides=[8, 16, 32, 64, 128],
+        IoUtype = 'IoU',
+        loss_reweight = True,
+
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
@@ -60,15 +63,7 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True),
-<<<<<<< HEAD
     dict(type='Resize', img_scale=(1333, 800), keep_ratio=True),
-=======
-    dict(
-        type='Resize',
-        img_scale=[(1333, 640), (1333, 800)],
-        multiscale_mode='value',
-        keep_ratio=True),
->>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
@@ -95,8 +90,8 @@ data = dict(
     workers_per_gpu=4,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/instances_train2017.json',
-        img_prefix=data_root + 'train2017/',
+        ann_file=data_root + 'annotations/instances_val2017.json',
+        img_prefix=data_root + 'val2017/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
@@ -112,11 +107,7 @@ evaluation = dict(interval=1, metric='bbox')
 # optimizer
 optimizer = dict(
     type='SGD',
-<<<<<<< HEAD
     lr=0.01,
-=======
-    lr=0.001,
->>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
@@ -127,11 +118,7 @@ lr_config = dict(
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
-<<<<<<< HEAD
-    step=[8, 11])
-=======
-    step=[4])
->>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
+    step=[4, 5])
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -142,19 +129,11 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
-<<<<<<< HEAD
-total_epochs = 12
-dist_params = dict(backend='nccl')
-log_level = 'INFO'
-work_dir = './work_dirs/fcos_r50_caffe_fpn_gn_1x_4gpu'
-load_from = '/home/zhongying/research/repo/mmdetection/checkpoint/fcos_mstrain_640_800_r50_caffe_fpn_gn_2x_4gpu_20190516-f7329d80.pth'
-=======
 total_epochs = 6
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/test_fcos_r50_caffe_fpn_gn_1x_4gpu'
-load_from = 'checkpoint/fcos_mstrain_640_800_r50_caffe_fpn_gn_2x_4gpu_20190516-f7329d80.pth'
-#load_from = None
->>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
+work_dir = 'work_dirs/otss_fcos_r50_caffe_fpn_gn_1x_4gpu_test_IoU_reweight'
+load_from = 'work_dirs/otss_fcos_r50_caffe_fpn_gn_1x_4gpu_test_IoU/latest.pth'
 resume_from = None
 workflow = [('train', 1)]
+find_unused_parameters = True
