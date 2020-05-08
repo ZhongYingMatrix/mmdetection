@@ -204,7 +204,22 @@ class FCOSHead(nn.Module):
             pos_decoded_bbox_preds = distance2bbox(pos_points, pos_bbox_preds)
             pos_decoded_target_preds = distance2bbox(pos_points,
                                                      pos_bbox_targets)
+            
+            # fcos_val_in_loss = {
+            #     'cls_scores' = cls_scores,
+            #     'bbox_preds' = bbox_preds,
+            #     'centernesses' = centernesses,
+            #     'gt_bboxes' = gt_bboxes,
+            #     'gt_labels' = gt_labels,
+            #     'img_metas' = img_metas,
+            #     'labels' = labels,
+            #     'bbox_targets' = bbox_targets,
+            #     'all_level_points' = all_level_points
+            # }
+            # torch.save(fcos_val_in_loss, './tmp/fcos_val_in_loss.pth')
+            # import pdb; pdb.set_trace()
             # centerness weighted iou loss
+            #import pdb; pdb.set_trace()
             loss_bbox = self.loss_bbox(
                 pos_decoded_bbox_preds,
                 pos_decoded_target_preds,

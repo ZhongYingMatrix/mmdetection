@@ -34,9 +34,7 @@ model = dict(
             loss_weight=1.0),
         loss_bbox=dict(type='IoULoss', loss_weight=1.0),
         loss_centerness=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        center_sampling=True,
-        center_sample_radius=1.5))
+            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)))
 # training and testing settings
 train_cfg = dict(
     assigner=dict(
@@ -62,11 +60,15 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', with_bbox=True),
+<<<<<<< HEAD
+    dict(type='Resize', img_scale=(1333, 800), keep_ratio=True),
+=======
     dict(
         type='Resize',
         img_scale=[(1333, 640), (1333, 800)],
         multiscale_mode='value',
         keep_ratio=True),
+>>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
     dict(type='RandomFlip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
@@ -110,7 +112,11 @@ evaluation = dict(interval=1, metric='bbox')
 # optimizer
 optimizer = dict(
     type='SGD',
+<<<<<<< HEAD
+    lr=0.01,
+=======
     lr=0.001,
+>>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
     momentum=0.9,
     weight_decay=0.0001,
     paramwise_options=dict(bias_lr_mult=2., bias_decay_mult=0.))
@@ -121,7 +127,11 @@ lr_config = dict(
     warmup='constant',
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
+<<<<<<< HEAD
+    step=[8, 11])
+=======
     step=[4])
+>>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
 checkpoint_config = dict(interval=1)
 # yapf:disable
 log_config = dict(
@@ -132,11 +142,19 @@ log_config = dict(
     ])
 # yapf:enable
 # runtime settings
+<<<<<<< HEAD
+total_epochs = 12
+dist_params = dict(backend='nccl')
+log_level = 'INFO'
+work_dir = './work_dirs/fcos_r50_caffe_fpn_gn_1x_4gpu'
+load_from = '/home/zhongying/research/repo/mmdetection/checkpoint/fcos_mstrain_640_800_r50_caffe_fpn_gn_2x_4gpu_20190516-f7329d80.pth'
+=======
 total_epochs = 6
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/test_fcos_r50_caffe_fpn_gn_1x_4gpu'
 load_from = 'checkpoint/fcos_mstrain_640_800_r50_caffe_fpn_gn_2x_4gpu_20190516-f7329d80.pth'
 #load_from = None
+>>>>>>> 29b5e9cc30b17af53efc2705bc7f6128af1f043d
 resume_from = None
 workflow = [('train', 1)]
