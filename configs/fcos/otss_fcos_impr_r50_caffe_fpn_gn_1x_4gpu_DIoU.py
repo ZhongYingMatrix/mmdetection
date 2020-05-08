@@ -27,7 +27,6 @@ model = dict(
         feat_channels=256,
         strides=[8, 16, 32, 64, 128],
         IoUtype='DIoU',
-        loss_reweight=False,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
@@ -138,6 +137,6 @@ dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_DIoU'
 load_from = None
-resume_from = None
+resume_from = 'work_dirs/otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_DIoU/latest.pth'
 workflow = [('train', 1)]
 find_unused_parameters = True
