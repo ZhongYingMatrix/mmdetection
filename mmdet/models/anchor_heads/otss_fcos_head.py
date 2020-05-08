@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
@@ -12,7 +13,7 @@ INF = 1e8
 
 
 @HEADS.register_module
-class FCOSHead(nn.Module):
+class OTSS_FCOSHead(nn.Module):
     """
     Fully Convolutional One-Stage Object Detection head from [1]_.
 
@@ -40,6 +41,7 @@ class FCOSHead(nn.Module):
                                  (512, INF)),
                  center_sampling=False,
                  center_sample_radius=1.5,
+                 IoUtype='IoU',
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -52,8 +54,11 @@ class FCOSHead(nn.Module):
                      use_sigmoid=True,
                      loss_weight=1.0),
                  conv_cfg=None,
-                 norm_cfg=dict(type='GN', num_groups=32, requires_grad=True)):
-        super(FCOSHead, self).__init__()
+                 norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
+                 reg_norm=False,
+                 ctr_on_reg=False,
+                 use_centerness=False):
+        super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
         self.cls_out_channels = num_classes - 1
@@ -70,6 +75,10 @@ class FCOSHead(nn.Module):
         self.fp16_enabled = False
         self.center_sampling = center_sampling
         self.center_sample_radius = center_sample_radius
+        self.IoUtype = IoUtype
+        self.reg_norm = reg_norm
+        self.ctr_on_reg = ctr_on_reg
+        self.use_centerness = use_centerness
 
         self._init_layers()
 
@@ -116,22 +125,30 @@ class FCOSHead(nn.Module):
         normal_init(self.fcos_centerness, std=0.01)
 
     def forward(self, feats):
-        return multi_apply(self.forward_single, feats, self.scales)
+        return multi_apply(self.forward_single, feats, self.scales,
+                           self.strides)
 
-    def forward_single(self, x, scale):
+    def forward_single(self, x, scale, stride):
         cls_feat = x
         reg_feat = x
 
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         cls_score = self.fcos_cls(cls_feat)
-        centerness = self.fcos_centerness(cls_feat)
 
         for reg_layer in self.reg_convs:
             reg_feat = reg_layer(reg_feat)
+
+        if self.ctr_on_reg:
+            centerness = self.fcos_centerness(reg_feat)
+        else:
+            centerness = self.fcos_centerness(cls_feat)
         # scale the bbox_pred of different level
         # float to avoid overflow when enabling FP16
-        bbox_pred = scale(self.fcos_reg(reg_feat)).float().exp()
+        if self.reg_norm:
+            bbox_pred = F.relu(scale(self.fcos_reg(reg_feat)).float()) * stride
+        else:
+            bbox_pred = scale(self.fcos_reg(reg_feat)).float().exp()
         return cls_score, bbox_pred, centerness
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
@@ -148,79 +165,194 @@ class FCOSHead(nn.Module):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
-        labels, bbox_targets = self.fcos_target(all_level_points, gt_bboxes,
-                                                gt_labels)
+
+        # TODO inside bbox; soft weighted; dynamic threshold
+        self.topk = 9
+        candidate_idxs = []  # img * [lvl * idxs(9*nums_gt)]
+        for gt_b in gt_bboxes:
+            candidate_idxs_img = []
+            gt_cx = (gt_b[:, 0] + gt_b[:, 2]) / 2.0
+            gt_cy = (gt_b[:, 1] + gt_b[:, 3]) / 2.0
+            gt_points = torch.stack((gt_cx, gt_cy), dim=1)
+            for lvl_points in all_level_points:
+                distances = (lvl_points[:, None, :] -
+                             gt_points[None, :, :]).pow(2).sum(-1).sqrt()
+                _, topk_idxs = distances.topk(self.topk, dim=0, largest=False)
+                candidate_idxs_img.append(topk_idxs)
+            candidate_idxs_img = torch.cat(
+                [idxs[None, ...] for idxs in candidate_idxs_img])
+            candidate_idxs.append(candidate_idxs_img)
+
+        loss_bbox = 0
+        num_pos = 0
+        cls_targets = [torch.zeros_like(cls_score) for cls_score in cls_scores]
 
         num_imgs = cls_scores[0].size(0)
-        # flatten cls_scores, bbox_preds and centerness
+        if self.use_centerness:
+            ctr_target_lst = []
+            ctr_pred_lst = []
+        for img_id in range(num_imgs):
+            cls_lst = []
+            de_bbox_lst = []
+            centerpoint_lst = []
+            ctrness_lst = []
+            for lvl_id in range(len(self.strides)):
+                flatten_cls_img_lvl = cls_scores[lvl_id][img_id].permute(
+                    1, 2, 0).reshape(-1, self.cls_out_channels)
+                flatten_bbox_img_lvl = bbox_preds[lvl_id][img_id].permute(
+                    1, 2, 0).reshape(-1, 4)
+                flatten_ctrness_img_lvl = centernesses[lvl_id][img_id].permute(
+                    1, 2, 0).reshape(-1, 1)
+                candidate_cls_img_lvl = flatten_cls_img_lvl[
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_bbox_img_lvl = flatten_bbox_img_lvl[
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_ctrness_img_lvl = flatten_ctrness_img_lvl[
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_points_img_lvl = all_level_points[lvl_id][
+                    candidate_idxs[img_id][lvl_id], :]
+                candidate_decoded_bbox_img_lvl = distance2bbox(
+                    candidate_points_img_lvl.reshape(-1, 2),
+                    candidate_bbox_img_lvl.reshape(-1, 4)).reshape(
+                        self.topk, -1, 4)
+                cls_lst.append(candidate_cls_img_lvl)
+                de_bbox_lst.append(candidate_decoded_bbox_img_lvl)
+                centerpoint_lst.append(candidate_points_img_lvl)
+                ctrness_lst.append(candidate_ctrness_img_lvl)
+            cls_lst_gt = [
+                torch.cat([
+                    cls_lst[lvl_id][:, gt_id, gt_labels[img_id][gt_id] - 1]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            de_bbox_gt = [
+                torch.cat([
+                    de_bbox_lst[lvl_id][:, gt_id, :]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            centerpoint_gt = [
+                torch.cat([
+                    centerpoint_lst[lvl_id][:, gt_id, :]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            ctrness_gt = [
+                torch.cat([
+                    ctrness_lst[lvl_id][:, gt_id, :]
+                    for lvl_id in range(len(self.strides))
+                ], dim=0) for gt_id in range(len(gt_bboxes[img_id]))
+            ]
+            cls_lst_gt = torch.cat(
+                [cls_gt[None, ...] for cls_gt in cls_lst_gt])
+            de_bbox_gt = torch.cat([db_gt[None, ...] for db_gt in de_bbox_gt])
+            centerpoint_gt = torch.cat(
+                [cp_gt[None, ...] for cp_gt in centerpoint_gt])
+            ctrness_gt = torch.cat(
+                [cn_gt[None, ...] for cn_gt in ctrness_gt]).squeeze(dim=2)
+            gt_bboxes_img = gt_bboxes[img_id][:, None, :].repeat(
+                1,
+                len(self.strides) * self.topk, 1)
+            from mmdet.core import bbox_overlaps
+            if self.IoUtype == 'IoU':
+                de_bbox_gt = bbox_overlaps(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4),
+                    is_aligned=True).clamp(min=1e-6).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+            elif self.IoUtype == 'DIoU':
+                _de_bbox_gt = self.DIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            else:
+                raise NotImplementedError
+
+            scores = (de_bbox_gt * cls_lst_gt.sigmoid()).detach()
+            threshold = (scores.mean(dim=1) +
+                         scores.std(dim=1))[:, None].repeat(
+                             1,
+                             len(self.strides) * self.topk)
+            keep_idxmask = (scores >= threshold)
+            if self.use_centerness:
+                center_p = centerpoint_gt.view(-1, 2)
+                gt = gt_bboxes_img.view(-1, 4)
+                left = center_p[:, 0] - gt[:, 0]
+                right = gt[:, 2] - center_p[:, 0]
+                up = center_p[:, 1] - gt[:, 1]
+                down = gt[:, 3] - center_p[:, 1]
+                l_r = torch.stack((left, right)).clamp(min=1e-6)
+                u_d = torch.stack((up, down)).clamp(min=1e-6)
+                centerness = ((l_r.min(dim=0)[0] * u_d.min(dim=0)[0]) /
+                              (l_r.max(dim=0)[0] * u_d.max(dim=0)[0])).sqrt()
+                centerness = centerness.reshape(
+                    -1,
+                    len(self.strides) * self.topk)[keep_idxmask]
+                reweight_factor = centerness
+                num_pos += reweight_factor.sum()
+                ctrness_pred = ctrness_gt[keep_idxmask]
+                ctr_target_lst.append(centerness)
+                ctr_pred_lst.append(ctrness_pred)
+            else:
+                reweight_factor = 1
+                num_pos += keep_idxmask.sum()
+
+            if self.IoUtype == 'IoU':
+                loss_bbox -= (de_bbox_gt[keep_idxmask].log() *
+                              reweight_factor).sum()
+            elif self.IoUtype == 'DIoU':
+                loss_bbox += ((1-_de_bbox_gt[keep_idxmask]) *
+                              reweight_factor).sum()
+            else:
+                raise NotImplementedError
+            # import pdb; pdb.set_trace()
+
+            # cls
+            keep_idxmask = keep_idxmask.permute(1, 0).reshape(
+                len(self.strides), self.topk, -1)
+            for lvl_id in range(len(self.strides)):
+                keep_idxmask_lvl = keep_idxmask[lvl_id]
+                candidate_idxs_lvl = candidate_idxs[img_id][lvl_id][
+                    keep_idxmask_lvl]
+                gt_lables_lvl = gt_labels[img_id][None, :].repeat(
+                    self.topk, 1)[keep_idxmask_lvl] - 1
+                cls_targets[lvl_id][img_id].view(self.cls_out_channels,
+                                                 -1)[gt_lables_lvl,
+                                                     candidate_idxs_lvl] = 1
+        if self.use_centerness:
+            loss_centerness = self.loss_centerness(
+                torch.cat(ctr_pred_lst), torch.cat(ctr_target_lst))
+        loss_bbox /= num_pos
         flatten_cls_scores = [
             cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
             for cls_score in cls_scores
         ]
-        flatten_bbox_preds = [
-            bbox_pred.permute(0, 2, 3, 1).reshape(-1, 4)
-            for bbox_pred in bbox_preds
-        ]
-        flatten_centerness = [
-            centerness.permute(0, 2, 3, 1).reshape(-1)
-            for centerness in centernesses
+        flatten_cls_targets = [
+            cls_target.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
+            for cls_target in cls_targets
         ]
         flatten_cls_scores = torch.cat(flatten_cls_scores)
-        flatten_bbox_preds = torch.cat(flatten_bbox_preds)
-        flatten_centerness = torch.cat(flatten_centerness)
-        flatten_labels = torch.cat(labels)
-        flatten_bbox_targets = torch.cat(bbox_targets)
-        # repeat points to align with bbox_preds
-        flatten_points = torch.cat(
-            [points.repeat(num_imgs, 1) for points in all_level_points])
-
-        pos_inds = flatten_labels.nonzero().reshape(-1)
-        num_pos = len(pos_inds)
-        loss_cls = self.loss_cls(
-            flatten_cls_scores, flatten_labels,
+        flatten_cls_targets = torch.cat(flatten_cls_targets).long()
+        # loss_cls = self.loss_cls(
+        #     flatten_cls_scores, flatten_cls_targets,
+        #     avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
+        from mmdet.models.losses.focal_loss import py_sigmoid_focal_loss
+        loss_cls = py_sigmoid_focal_loss(
+            flatten_cls_scores,
+            flatten_cls_targets,
             avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
-
-        pos_bbox_preds = flatten_bbox_preds[pos_inds]
-        pos_centerness = flatten_centerness[pos_inds]
-
-        if num_pos > 0:
-            pos_bbox_targets = flatten_bbox_targets[pos_inds]
-            pos_centerness_targets = self.centerness_target(pos_bbox_targets)
-            pos_points = flatten_points[pos_inds]
-            pos_decoded_bbox_preds = distance2bbox(pos_points, pos_bbox_preds)
-            pos_decoded_target_preds = distance2bbox(pos_points,
-                                                     pos_bbox_targets)
-            
-            # fcos_val_in_loss = {
-            #     'cls_scores' = cls_scores,
-            #     'bbox_preds' = bbox_preds,
-            #     'centernesses' = centernesses,
-            #     'gt_bboxes' = gt_bboxes,
-            #     'gt_labels' = gt_labels,
-            #     'img_metas' = img_metas,
-            #     'labels' = labels,
-            #     'bbox_targets' = bbox_targets,
-            #     'all_level_points' = all_level_points
-            # }
-            # torch.save(fcos_val_in_loss, './tmp/fcos_val_in_loss.pth')
-            # import pdb; pdb.set_trace()
-            # centerness weighted iou loss
-            #import pdb; pdb.set_trace()
-            loss_bbox = self.loss_bbox(
-                pos_decoded_bbox_preds,
-                pos_decoded_target_preds,
-                weight=pos_centerness_targets,
-                avg_factor=pos_centerness_targets.sum())
-            loss_centerness = self.loss_centerness(pos_centerness,
-                                                   pos_centerness_targets)
+        if self.use_centerness:
+            return_dict = dict(loss_cls=loss_cls,
+                               loss_bbox=loss_bbox,
+                               loss_centerness=loss_centerness)
         else:
-            loss_bbox = pos_bbox_preds.sum()
-            loss_centerness = pos_centerness.sum()
+            return_dict = dict(loss_cls=loss_cls,
+                               loss_bbox=loss_bbox)
 
-        return dict(
-            loss_cls=loss_cls,
-            loss_bbox=loss_bbox,
-            loss_centerness=loss_centerness)
+        return return_dict
 
     @force_fp32(apply_to=('cls_scores', 'bbox_preds', 'centernesses'))
     def get_bboxes(self,
@@ -279,7 +411,8 @@ class FCOSHead(nn.Module):
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
-                max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                # max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                max_scores, _ = scores.max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 points = points[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
@@ -296,13 +429,11 @@ class FCOSHead(nn.Module):
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
         mlvl_scores = torch.cat([padding, mlvl_scores], dim=1)
         mlvl_centerness = torch.cat(mlvl_centerness)
-        det_bboxes, det_labels = multiclass_nms(
-            mlvl_bboxes,
-            mlvl_scores,
-            cfg.score_thr,
-            cfg.nms,
-            cfg.max_per_img,
-            score_factors=mlvl_centerness)
+        det_bboxes, det_labels = multiclass_nms(mlvl_bboxes, mlvl_scores,
+                                                cfg.score_thr, cfg.nms,
+                                                cfg.max_per_img)
+        # ,
+        # score_factors=mlvl_centerness)
         return det_bboxes, det_labels
 
     def get_points(self, featmap_sizes, dtype, device):
@@ -461,9 +592,49 @@ class FCOSHead(nn.Module):
 
     def centerness_target(self, pos_bbox_targets):
         # only calculate pos centerness targets, otherwise there may be nan
+        # modify nan to 0
         left_right = pos_bbox_targets[:, [0, 2]]
         top_bottom = pos_bbox_targets[:, [1, 3]]
         centerness_targets = (
             left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * (
                 top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+        centerness_targets = centerness_targets.clamp(min=0)
         return torch.sqrt(centerness_targets)
+
+    def DIoU(self, pred, target, rescale=False, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose diag
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_diag = (enclose_wh[:, 0].pow(2) +
+                        enclose_wh[:, 1].pow(2)).sqrt()
+
+        # center distance
+        xp = (pred[:, 0] + pred[:, 2]) / 2
+        yp = (pred[:, 1] + pred[:, 3]) / 2
+        xg = (target[:, 0] + target[:, 2]) / 2
+        yg = (target[:, 1] + target[:, 3]) / 2
+        center_d = ((xp - xg).pow(2) + (yp - yg).pow(2)).sqrt()
+
+        # DIoU
+        dious = ious - center_d / enclose_diag
+
+        if rescale:
+            dious = (dious + 1) / 2
+
+        return dious
