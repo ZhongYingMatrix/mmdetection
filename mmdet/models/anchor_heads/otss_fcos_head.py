@@ -278,6 +278,12 @@ class OTSS_FCOSHead(nn.Module):
                              len(self.strides) * self.topk)
             keep_idxmask = (scores >= threshold)
             if self.use_centerness:
+                inside_gt_bbox_mask = (
+                    (centerpoint_gt[..., 0] > gt_bboxes_img[..., 0]) *
+                    (centerpoint_gt[..., 0] < gt_bboxes_img[..., 2]) *
+                    (centerpoint_gt[..., 1] > gt_bboxes_img[..., 1]) *
+                    (centerpoint_gt[..., 1] < gt_bboxes_img[..., 3]))
+                keep_idxmask *= inside_gt_bbox_mask
                 center_p = centerpoint_gt.view(-1, 2)
                 gt = gt_bboxes_img.view(-1, 4)
                 left = center_p[:, 0] - gt[:, 0]
