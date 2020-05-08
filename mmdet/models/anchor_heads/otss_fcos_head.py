@@ -411,8 +411,10 @@ class OTSS_FCOSHead(nn.Module):
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
-                # max_scores, _ = (scores * centerness[:, None]).max(dim=1)
-                max_scores, _ = scores.max(dim=1)
+                if self.use_centerness:
+                    max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                else:
+                    max_scores, _ = scores.max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 points = points[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
@@ -429,11 +431,11 @@ class OTSS_FCOSHead(nn.Module):
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
         mlvl_scores = torch.cat([padding, mlvl_scores], dim=1)
         mlvl_centerness = torch.cat(mlvl_centerness)
-        det_bboxes, det_labels = multiclass_nms(mlvl_bboxes, mlvl_scores,
-                                                cfg.score_thr, cfg.nms,
-                                                cfg.max_per_img)
-        # ,
-        # score_factors=mlvl_centerness)
+        det_bboxes, det_labels = multiclass_nms(
+            mlvl_bboxes, mlvl_scores,
+            cfg.score_thr, cfg.nms,
+            cfg.max_per_img,
+            score_factors=mlvl_centerness if self.use_centerness else None)
         return det_bboxes, det_labels
 
     def get_points(self, featmap_sizes, dtype, device):
