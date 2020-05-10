@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
@@ -268,6 +269,20 @@ class OTSS_FCOSHead(nn.Module):
                         -1,
                         len(self.strides) * self.topk)
                 de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            elif self.IoUtype == 'GIoU':
+                _de_bbox_gt = self.GIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            elif self.IoUtype == 'CIoU':
+                _de_bbox_gt = self.CIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
             else:
                 raise NotImplementedError
 
@@ -309,7 +324,7 @@ class OTSS_FCOSHead(nn.Module):
             if self.IoUtype == 'IoU':
                 loss_bbox -= (de_bbox_gt[keep_idxmask].log() *
                               reweight_factor).sum()
-            elif self.IoUtype == 'DIoU':
+            elif self.IoUtype in ['DIoU', 'GIoU', 'CIoU']:
                 loss_bbox += ((1-_de_bbox_gt[keep_idxmask]) *
                               reweight_factor).sum()
             else:
@@ -417,8 +432,10 @@ class OTSS_FCOSHead(nn.Module):
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
-                # max_scores, _ = (scores * centerness[:, None]).max(dim=1)
-                max_scores, _ = scores.max(dim=1)
+                if self.use_centerness:
+                    max_scores, _ = (scores * centerness[:, None]).max(dim=1)
+                else:
+                    max_scores, _ = scores.max(dim=1)
                 _, topk_inds = max_scores.topk(nms_pre)
                 points = points[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
@@ -435,11 +452,11 @@ class OTSS_FCOSHead(nn.Module):
         padding = mlvl_scores.new_zeros(mlvl_scores.shape[0], 1)
         mlvl_scores = torch.cat([padding, mlvl_scores], dim=1)
         mlvl_centerness = torch.cat(mlvl_centerness)
-        det_bboxes, det_labels = multiclass_nms(mlvl_bboxes, mlvl_scores,
-                                                cfg.score_thr, cfg.nms,
-                                                cfg.max_per_img)
-        # ,
-        # score_factors=mlvl_centerness)
+        det_bboxes, det_labels = multiclass_nms(
+            mlvl_bboxes, mlvl_scores,
+            cfg.score_thr, cfg.nms,
+            cfg.max_per_img,
+            score_factors=mlvl_centerness if self.use_centerness else None)
         return det_bboxes, det_labels
 
     def get_points(self, featmap_sizes, dtype, device):
@@ -607,6 +624,7 @@ class OTSS_FCOSHead(nn.Module):
         centerness_targets = centerness_targets.clamp(min=0)
         return torch.sqrt(centerness_targets)
 
+    # not really correct, with sqrt 
     def DIoU(self, pred, target, rescale=False, eps=1e-7):
         # overlap
         lt = torch.max(pred[:, :2], target[:, :2])
@@ -644,3 +662,80 @@ class OTSS_FCOSHead(nn.Module):
             dious = (dious + 1) / 2
 
         return dious
+
+    def GIoU(self, pred, target, rescale=False, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose area
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_area = enclose_wh[:, 0] * enclose_wh[:, 1] + eps
+
+        # GIoU
+        gious = ious - (enclose_area - union) / enclose_area
+
+        if rescale:
+            gious = (gious + 1) / 2
+
+        return gious
+
+    def CIoU(self, pred, target, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose diag
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_diag = (enclose_wh[:, 0].pow(2) +
+                        enclose_wh[:, 1].pow(2) + eps)
+
+        # center distance
+        xp = (pred[:, 0] + pred[:, 2]) / 2
+        yp = (pred[:, 1] + pred[:, 3]) / 2
+        xg = (target[:, 0] + target[:, 2]) / 2
+        yg = (target[:, 1] + target[:, 3]) / 2
+        center_d = (xp - xg).pow(2) + (yp - yg).pow(2)
+
+        # DIoU
+        dious = ious - center_d / enclose_diag
+
+        # CIoU
+        w_gt = target[:, 2] - target[:, 0] + 1
+        h_gt = target[:, 3] - target[:, 1] + 1
+        w_pred = pred[:, 2] - pred[:, 0] + 1
+        h_pred = pred[:, 3] - pred[:, 1] + 1
+        v = (4 / math.pi**2) * torch.pow(
+            (torch.atan(w_gt/h_gt) - torch.atan(w_pred/h_pred)), 2)
+        with torch.no_grad():
+            S = 1 - ious
+            alpha = v / (S + v)
+        cious = dious - alpha * v
+
+        return cious
