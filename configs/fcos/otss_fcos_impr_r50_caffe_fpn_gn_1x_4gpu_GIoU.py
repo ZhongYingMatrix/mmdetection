@@ -26,7 +26,7 @@ model = dict(
         stacked_convs=4,
         feat_channels=256,
         strides=[8, 16, 32, 64, 128],
-        IoUtype='DIoU',
+        IoUtype='GIoU',
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
@@ -135,7 +135,7 @@ log_config = dict(
 total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_DIoU'
+work_dir = './work_dirs/otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_GIoU'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]

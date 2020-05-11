@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
@@ -57,7 +58,8 @@ class OTSS_FCOSHead(nn.Module):
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  reg_norm=False,
                  ctr_on_reg=False,
-                 use_centerness=False):
+                 use_centerness=False,
+                 dynamic_thr=True):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -79,6 +81,7 @@ class OTSS_FCOSHead(nn.Module):
         self.reg_norm = reg_norm
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
+        self.dynamic_thr = dynamic_thr
 
         self._init_layers()
 
@@ -268,15 +271,36 @@ class OTSS_FCOSHead(nn.Module):
                         -1,
                         len(self.strides) * self.topk)
                 de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            elif self.IoUtype == 'GIoU':
+                _de_bbox_gt = self.GIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
+            elif self.IoUtype == 'CIoU':
+                _de_bbox_gt = self.CIoU(
+                    de_bbox_gt.reshape(-1, 4),
+                    gt_bboxes_img.reshape(-1, 4)).reshape(
+                        -1,
+                        len(self.strides) * self.topk)
+                de_bbox_gt = _de_bbox_gt.clamp(min=1e-6)
             else:
                 raise NotImplementedError
 
-            scores = (de_bbox_gt * cls_lst_gt.sigmoid()).detach()
-            threshold = (scores.mean(dim=1) +
-                         scores.std(dim=1))[:, None].repeat(
-                             1,
-                             len(self.strides) * self.topk)
-            keep_idxmask = (scores >= threshold)
+            with torch.no_grad():
+                scores = de_bbox_gt * cls_lst_gt.sigmoid()
+                if self.dynamic_thr:
+                    s_max = scores.max(dim=1)[0]
+                    threshold = (scores.mean(dim=1) +
+                                scores.std(dim=1)) * s_max.sqrt()
+                else:
+                    threshold = (scores.mean(dim=1) +
+                                scores.std(dim=1))
+                threshold = threshold[:, None].repeat(
+                    1,
+                    len(self.strides) * self.topk)
+                keep_idxmask = (scores >= threshold)
             if self.use_centerness:
                 inside_gt_bbox_mask = (
                     (centerpoint_gt[..., 0] > gt_bboxes_img[..., 0]) *
@@ -309,7 +333,7 @@ class OTSS_FCOSHead(nn.Module):
             if self.IoUtype == 'IoU':
                 loss_bbox -= (de_bbox_gt[keep_idxmask].log() *
                               reweight_factor).sum()
-            elif self.IoUtype == 'DIoU':
+            elif self.IoUtype in ['DIoU', 'GIoU', 'CIoU']:
                 loss_bbox += ((1-_de_bbox_gt[keep_idxmask]) *
                               reweight_factor).sum()
             else:
@@ -609,6 +633,7 @@ class OTSS_FCOSHead(nn.Module):
         centerness_targets = centerness_targets.clamp(min=0)
         return torch.sqrt(centerness_targets)
 
+    # not really correct, with sqrt 
     def DIoU(self, pred, target, rescale=False, eps=1e-7):
         # overlap
         lt = torch.max(pred[:, :2], target[:, :2])
@@ -646,3 +671,80 @@ class OTSS_FCOSHead(nn.Module):
             dious = (dious + 1) / 2
 
         return dious
+
+    def GIoU(self, pred, target, rescale=False, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose area
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_area = enclose_wh[:, 0] * enclose_wh[:, 1] + eps
+
+        # GIoU
+        gious = ious - (enclose_area - union) / enclose_area
+
+        if rescale:
+            gious = (gious + 1) / 2
+
+        return gious
+
+    def CIoU(self, pred, target, eps=1e-7):
+        # overlap
+        lt = torch.max(pred[:, :2], target[:, :2])
+        rb = torch.min(pred[:, 2:], target[:, 2:])
+        wh = (rb - lt + 1).clamp(min=0)
+        overlap = wh[:, 0] * wh[:, 1]
+
+        # union
+        ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+        ag = (target[:, 2] - target[:, 0] + 1) * (
+            target[:, 3] - target[:, 1] + 1)
+        union = ap + ag - overlap + eps
+
+        # IoU
+        ious = overlap / union
+
+        # enclose diag
+        enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+        enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+        enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+        enclose_diag = (enclose_wh[:, 0].pow(2) +
+                        enclose_wh[:, 1].pow(2) + eps)
+
+        # center distance
+        xp = (pred[:, 0] + pred[:, 2]) / 2
+        yp = (pred[:, 1] + pred[:, 3]) / 2
+        xg = (target[:, 0] + target[:, 2]) / 2
+        yg = (target[:, 1] + target[:, 3]) / 2
+        center_d = (xp - xg).pow(2) + (yp - yg).pow(2)
+
+        # DIoU
+        dious = ious - center_d / enclose_diag
+
+        # CIoU
+        w_gt = target[:, 2] - target[:, 0] + 1
+        h_gt = target[:, 3] - target[:, 1] + 1
+        w_pred = pred[:, 2] - pred[:, 0] + 1
+        h_pred = pred[:, 3] - pred[:, 1] + 1
+        v = (4 / math.pi**2) * torch.pow(
+            (torch.atan(w_gt/h_gt) - torch.atan(w_pred/h_pred)), 2)
+        with torch.no_grad():
+            S = 1 - ious
+            alpha = v / (S + v)
+        cious = dious - alpha * v
+
+        return cious
