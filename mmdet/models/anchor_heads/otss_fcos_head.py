@@ -58,8 +58,7 @@ class OTSS_FCOSHead(nn.Module):
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  reg_norm=False,
                  ctr_on_reg=False,
-                 use_centerness=False,
-                 dynamic_thr=True):
+                 use_centerness=False):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -81,7 +80,6 @@ class OTSS_FCOSHead(nn.Module):
         self.reg_norm = reg_norm
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
-        self.dynamic_thr = dynamic_thr
 
         self._init_layers()
 
@@ -288,19 +286,12 @@ class OTSS_FCOSHead(nn.Module):
             else:
                 raise NotImplementedError
 
-            with torch.no_grad():
-                scores = de_bbox_gt * cls_lst_gt.sigmoid()
-                if self.dynamic_thr:
-                    s_max = scores.max(dim=1)[0]
-                    threshold = (scores.mean(dim=1) +
-                                scores.std(dim=1)) * s_max.sqrt()
-                else:
-                    threshold = (scores.mean(dim=1) +
-                                scores.std(dim=1))
-                threshold = threshold[:, None].repeat(
-                    1,
-                    len(self.strides) * self.topk)
-                keep_idxmask = (scores >= threshold)
+            scores = (de_bbox_gt * cls_lst_gt.sigmoid()).detach()
+            threshold = (scores.mean(dim=1) +
+                         scores.std(dim=1))[:, None].repeat(
+                             1,
+                             len(self.strides) * self.topk)
+            keep_idxmask = (scores >= threshold)
             if self.use_centerness:
                 inside_gt_bbox_mask = (
                     (centerpoint_gt[..., 0] > gt_bboxes_img[..., 0]) *
