@@ -41,7 +41,7 @@ model = dict(
         reg_norm=True,
         ctr_on_reg=True,
         use_centerness=True,
-        dynamic_thr=True))
+        soft_label=True))
 # training and testing settings
 train_cfg = dict(
     assigner=dict(
@@ -136,8 +136,8 @@ log_config = dict(
 total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = \
-    './work_dirs/otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_CIoU_dynamic_thr'
+work_dir = './work_dirs/' \
+    'otss_fcos_impr_r50_caffe_fpn_gn_1x_4gpu_CIoU_soft_label'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
