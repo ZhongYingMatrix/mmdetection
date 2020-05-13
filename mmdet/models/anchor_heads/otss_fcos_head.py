@@ -59,7 +59,6 @@ class OTSS_FCOSHead(nn.Module):
                  reg_norm=False,
                  ctr_on_reg=False,
                  use_centerness=False,
-                 dynamic_thr=False,
                  soft_label=False):
         super(OTSS_FCOSHead, self).__init__()
 
@@ -82,7 +81,6 @@ class OTSS_FCOSHead(nn.Module):
         self.reg_norm = reg_norm
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
-        self.dynamic_thr = dynamic_thr
         self.soft_label = soft_label
 
         self._init_layers()
@@ -346,7 +344,9 @@ class OTSS_FCOSHead(nn.Module):
             if self.soft_label:
                 with torch.no_grad():
                     soft_label = de_bbox_gt/de_bbox_gt.max(
-                        dim=1)[0][:, None].repeat(1, 45).detach()
+                        dim=1)[0][:, None].repeat(
+                            1,
+                            len(self.strides) * self.topk).detach()
                     soft_label = soft_label.permute(1, 0).reshape(
                         len(self.strides), self.topk, -1)
             keep_idxmask = keep_idxmask.permute(1, 0).reshape(
