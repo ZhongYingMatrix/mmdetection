@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 from mmdet.core import bbox_overlaps
 from ..registry import LOSSES
@@ -114,6 +115,71 @@ def giou_loss(pred, target, eps=1e-7):
     return loss
 
 
+@weighted_loss
+def ciou_loss(pred, target, eps=1e-7):
+    """
+    Generalized Intersection over Union: A Metric and A Loss for
+    Bounding Box Regression
+    https://arxiv.org/abs/1902.09630
+
+    code refer to:
+    https://github.com/sfzhang15/ATSS/blob/master/atss_core/modeling/rpn/atss/loss.py#L36
+
+    Args:
+        pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+            shape (n, 4).
+        target (Tensor): Corresponding gt bboxes, shape (n, 4).
+        eps (float): Eps to avoid log(0).
+
+    Return:
+        Tensor: Loss tensor.
+    """
+    # overlap
+    lt = torch.max(pred[:, :2], target[:, :2])
+    rb = torch.min(pred[:, 2:], target[:, 2:])
+    wh = (rb - lt + 1).clamp(min=0)
+    overlap = wh[:, 0] * wh[:, 1]
+
+    # union
+    ap = (pred[:, 2] - pred[:, 0] + 1) * (pred[:, 3] - pred[:, 1] + 1)
+    ag = (target[:, 2] - target[:, 0] + 1) * (target[:, 3] - target[:, 1] + 1)
+    union = ap + ag - overlap + eps
+
+    # IoU
+    ious = overlap / union
+
+    # enclose diag
+    enclose_x1y1 = torch.min(pred[:, :2], target[:, :2])
+    enclose_x2y2 = torch.max(pred[:, 2:], target[:, 2:])
+    enclose_wh = (enclose_x2y2 - enclose_x1y1 + 1).clamp(min=0)
+    enclose_diag = (enclose_wh[:, 0].pow(2) +
+                    enclose_wh[:, 1].pow(2) + eps)
+
+    # center distance
+    xp = (pred[:, 0] + pred[:, 2]) / 2
+    yp = (pred[:, 1] + pred[:, 3]) / 2
+    xg = (target[:, 0] + target[:, 2]) / 2
+    yg = (target[:, 1] + target[:, 3]) / 2
+    center_d = (xp - xg).pow(2) + (yp - yg).pow(2)
+
+    # DIoU
+    dious = ious - center_d / enclose_diag
+
+    # CIoU
+    w_gt = target[:, 2] - target[:, 0] + 1
+    h_gt = target[:, 3] - target[:, 1] + 1
+    w_pred = pred[:, 2] - pred[:, 0] + 1
+    h_pred = pred[:, 3] - pred[:, 1] + 1
+    v = (4 / math.pi**2) * torch.pow(
+        (torch.atan(w_gt/h_gt) - torch.atan(w_pred/h_pred)), 2)
+    with torch.no_grad():
+        S = 1 - ious
+        alpha = v / (S + v)
+    cious = dious - alpha * v
+    loss = 1 - cious
+    return loss
+
+
 @LOSSES.register_module
 class IoULoss(nn.Module):
 
@@ -202,6 +268,38 @@ class GIoULoss(nn.Module):
         reduction = (
             reduction_override if reduction_override else self.reduction)
         loss = self.loss_weight * giou_loss(
+            pred,
+            target,
+            weight,
+            eps=self.eps,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss
+
+
+@LOSSES.register_module
+class CIoULoss(nn.Module):
+
+    def __init__(self, eps=1e-6, reduction='mean', loss_weight=1.0):
+        super(CIoULoss, self).__init__()
+        self.eps = eps
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def forward(self,
+                pred,
+                target,
+                weight=None,
+                avg_factor=None,
+                reduction_override=None,
+                **kwargs):
+        if weight is not None and not torch.any(weight > 0):
+            return (pred * weight).sum()  # 0
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        loss = self.loss_weight * ciou_loss(
             pred,
             target,
             weight,

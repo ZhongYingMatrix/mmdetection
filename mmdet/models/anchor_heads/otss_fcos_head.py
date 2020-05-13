@@ -59,7 +59,8 @@ class OTSS_FCOSHead(nn.Module):
                  reg_norm=False,
                  ctr_on_reg=False,
                  use_centerness=False,
-                 dynamic_thr=True):
+                 dynamic_thr=False,
+                 soft_label=False):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -82,6 +83,7 @@ class OTSS_FCOSHead(nn.Module):
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
         self.dynamic_thr = dynamic_thr
+        self.soft_label = soft_label
 
         self._init_layers()
 
@@ -293,10 +295,10 @@ class OTSS_FCOSHead(nn.Module):
                 if self.dynamic_thr:
                     s_max = scores.max(dim=1)[0]
                     threshold = (scores.mean(dim=1) +
-                                scores.std(dim=1)) * s_max.sqrt()
+                                 scores.std(dim=1)) * s_max.sqrt()
                 else:
                     threshold = (scores.mean(dim=1) +
-                                scores.std(dim=1))
+                                 scores.std(dim=1))
                 threshold = threshold[:, None].repeat(
                     1,
                     len(self.strides) * self.topk)
@@ -341,6 +343,12 @@ class OTSS_FCOSHead(nn.Module):
             # import pdb; pdb.set_trace()
 
             # cls
+            if self.soft_label:
+                with torch.no_grad():
+                    soft_label = de_bbox_gt/de_bbox_gt.max(
+                        dim=1)[0][:, None].repeat(1, 45).detach()
+                    soft_label = soft_label.permute(1, 0).reshape(
+                        len(self.strides), self.topk, -1)
             keep_idxmask = keep_idxmask.permute(1, 0).reshape(
                 len(self.strides), self.topk, -1)
             for lvl_id in range(len(self.strides)):
@@ -349,9 +357,15 @@ class OTSS_FCOSHead(nn.Module):
                     keep_idxmask_lvl]
                 gt_lables_lvl = gt_labels[img_id][None, :].repeat(
                     self.topk, 1)[keep_idxmask_lvl] - 1
-                cls_targets[lvl_id][img_id].view(self.cls_out_channels,
-                                                 -1)[gt_lables_lvl,
-                                                     candidate_idxs_lvl] = 1
+                if self.soft_label:
+                    soft_label_lvl = soft_label[lvl_id][keep_idxmask_lvl]
+                    label_lvl = soft_label_lvl
+                else:
+                    label_lvl = 1
+                cls_targets[lvl_id][img_id].view(
+                    self.cls_out_channels,
+                    -1)[gt_lables_lvl,
+                        candidate_idxs_lvl] = label_lvl
         if self.use_centerness:
             loss_centerness = self.loss_centerness(
                 torch.cat(ctr_pred_lst), torch.cat(ctr_target_lst))
@@ -365,7 +379,7 @@ class OTSS_FCOSHead(nn.Module):
             for cls_target in cls_targets
         ]
         flatten_cls_scores = torch.cat(flatten_cls_scores)
-        flatten_cls_targets = torch.cat(flatten_cls_targets).long()
+        flatten_cls_targets = torch.cat(flatten_cls_targets)
         # loss_cls = self.loss_cls(
         #     flatten_cls_scores, flatten_cls_targets,
         #     avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
@@ -633,7 +647,7 @@ class OTSS_FCOSHead(nn.Module):
         centerness_targets = centerness_targets.clamp(min=0)
         return torch.sqrt(centerness_targets)
 
-    # not really correct, with sqrt 
+    # not really correct, with sqrt
     def DIoU(self, pred, target, rescale=False, eps=1e-7):
         # overlap
         lt = torch.max(pred[:, :2], target[:, :2])
