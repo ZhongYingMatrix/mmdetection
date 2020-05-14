@@ -59,7 +59,8 @@ class OTSS_FCOSHead(nn.Module):
                  reg_norm=False,
                  ctr_on_reg=False,
                  use_centerness=False,
-                 soft_label=False):
+                 soft_label=False,
+                 loss_weight={'cls': 1.0, 'ctr': 1.0, 'reg': 1.0}):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -82,6 +83,7 @@ class OTSS_FCOSHead(nn.Module):
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
         self.soft_label = soft_label
+        self.loss_weight = loss_weight
 
         self._init_layers()
 
@@ -290,13 +292,7 @@ class OTSS_FCOSHead(nn.Module):
 
             with torch.no_grad():
                 scores = de_bbox_gt * cls_lst_gt.sigmoid()
-                if self.dynamic_thr:
-                    s_max = scores.max(dim=1)[0]
-                    threshold = (scores.mean(dim=1) +
-                                 scores.std(dim=1)) * s_max.sqrt()
-                else:
-                    threshold = (scores.mean(dim=1) +
-                                 scores.std(dim=1))
+                threshold = (scores.mean(dim=1) + scores.std(dim=1))
                 threshold = threshold[:, None].repeat(
                     1,
                     len(self.strides) * self.topk)
@@ -389,12 +385,13 @@ class OTSS_FCOSHead(nn.Module):
             flatten_cls_targets,
             avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
         if self.use_centerness:
-            return_dict = dict(loss_cls=loss_cls,
-                               loss_bbox=loss_bbox,
-                               loss_centerness=loss_centerness)
+            return_dict = dict(loss_cls=loss_cls * self.loss_weight['cls'],
+                               loss_bbox=loss_bbox * self.loss_weight['reg'],
+                               loss_centerness=loss_centerness
+                               * self.loss_weight['ctr'])
         else:
-            return_dict = dict(loss_cls=loss_cls,
-                               loss_bbox=loss_bbox)
+            return_dict = dict(loss_cls=loss_cls * self.loss_weight['cls'],
+                               loss_bbox=loss_bbox * self.loss_weight['reg'])
 
         return return_dict
 
