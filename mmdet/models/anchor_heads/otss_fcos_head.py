@@ -6,6 +6,7 @@ from mmcv.cnn import normal_init
 
 from mmdet.core import distance2bbox, force_fp32, multi_apply, multiclass_nms
 from mmdet.ops import ConvModule, Scale
+from mmdet.ops import ModulatedDeformConvPack, build_norm_layer
 from ..builder import build_loss
 from ..registry import HEADS
 from ..utils import bias_init_with_prob
@@ -59,7 +60,9 @@ class OTSS_FCOSHead(nn.Module):
                  reg_norm=False,
                  ctr_on_reg=False,
                  use_centerness=False,
-                 soft_label=False):
+                 soft_label=False,
+                 use_dcn_in_tower=False,
+                 loss_weight={'cls': 1.0, 'ctr': 1.0, 'reg': 1.0}):
         super(OTSS_FCOSHead, self).__init__()
 
         self.num_classes = num_classes
@@ -82,6 +85,8 @@ class OTSS_FCOSHead(nn.Module):
         self.ctr_on_reg = ctr_on_reg
         self.use_centerness = use_centerness
         self.soft_label = soft_label
+        self.use_dcn_in_tower = use_dcn_in_tower
+        self.loss_weight = loss_weight
 
         self._init_layers()
 
@@ -90,26 +95,54 @@ class OTSS_FCOSHead(nn.Module):
         self.reg_convs = nn.ModuleList()
         for i in range(self.stacked_convs):
             chn = self.in_channels if i == 0 else self.feat_channels
-            self.cls_convs.append(
-                ConvModule(
-                    chn,
-                    self.feat_channels,
-                    3,
-                    stride=1,
-                    padding=1,
-                    conv_cfg=self.conv_cfg,
-                    norm_cfg=self.norm_cfg,
-                    bias=self.norm_cfg is None))
-            self.reg_convs.append(
-                ConvModule(
-                    chn,
-                    self.feat_channels,
-                    3,
-                    stride=1,
-                    padding=1,
-                    conv_cfg=self.conv_cfg,
-                    norm_cfg=self.norm_cfg,
-                    bias=self.norm_cfg is None))
+            if self.use_dcn_in_tower and i == self.stacked_convs - 1:
+                self.cls_convs.append(
+                    ModulatedDeformConvPack(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        dilation=1,
+                        deformable_groups=1))
+                if self.norm_cfg:
+                    self.cls_convs.append(
+                        build_norm_layer(self.norm_cfg, self.feat_channels)[1])
+                self.cls_convs.append(nn.ReLU(inplace=True))
+                self.reg_convs.append(
+                    ModulatedDeformConvPack(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        dilation=1,
+                        deformable_groups=1))
+                if self.norm_cfg:
+                    self.reg_convs.append(
+                        build_norm_layer(self.norm_cfg, self.feat_channels)[1])
+                self.reg_convs.append(nn.ReLU(inplace=True))
+            else:
+                self.cls_convs.append(
+                    ConvModule(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        conv_cfg=self.conv_cfg,
+                        norm_cfg=self.norm_cfg,
+                        bias=self.norm_cfg is None))
+                self.reg_convs.append(
+                    ConvModule(
+                        chn,
+                        self.feat_channels,
+                        3,
+                        stride=1,
+                        padding=1,
+                        conv_cfg=self.conv_cfg,
+                        norm_cfg=self.norm_cfg,
+                        bias=self.norm_cfg is None))
         self.fcos_cls = nn.Conv2d(
             self.feat_channels, self.cls_out_channels, 3, padding=1)
         self.fcos_reg = nn.Conv2d(self.feat_channels, 4, 3, padding=1)
@@ -119,9 +152,15 @@ class OTSS_FCOSHead(nn.Module):
 
     def init_weights(self):
         for m in self.cls_convs:
-            normal_init(m.conv, std=0.01)
+            if isinstance(m, ConvModule):
+                normal_init(m.conv, std=0.01)
+            elif isinstance(m, ModulatedDeformConvPack):
+                normal_init(m, std=0.01)
         for m in self.reg_convs:
-            normal_init(m.conv, std=0.01)
+            if isinstance(m, ConvModule):
+                normal_init(m.conv, std=0.01)
+            elif isinstance(m, ModulatedDeformConvPack):
+                normal_init(m, std=0.01)
         bias_cls = bias_init_with_prob(0.01)
         normal_init(self.fcos_cls, std=0.01, bias=bias_cls)
         normal_init(self.fcos_reg, std=0.01)
@@ -383,12 +422,13 @@ class OTSS_FCOSHead(nn.Module):
             flatten_cls_targets,
             avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
         if self.use_centerness:
-            return_dict = dict(loss_cls=loss_cls,
-                               loss_bbox=loss_bbox,
-                               loss_centerness=loss_centerness)
+            return_dict = dict(loss_cls=loss_cls * self.loss_weight['cls'],
+                               loss_bbox=loss_bbox * self.loss_weight['reg'],
+                               loss_centerness=loss_centerness
+                               * self.loss_weight['ctr'])
         else:
-            return_dict = dict(loss_cls=loss_cls,
-                               loss_bbox=loss_bbox)
+            return_dict = dict(loss_cls=loss_cls * self.loss_weight['cls'],
+                               loss_bbox=loss_bbox * self.loss_weight['reg'])
 
         return return_dict
 
