@@ -42,6 +42,7 @@ model = dict(
         ctr_on_reg=True,
         use_centerness=False,
         soft_label=True,
+        soft_weight=True,
         loss_weight={'cls': 1.0, 'ctr': 1.0, 'reg': 2.0}))
 # training and testing settings
 train_cfg = dict(
@@ -138,7 +139,7 @@ total_epochs = 12
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = './work_dirs/' \
-    'otss_fcos_wo-str_r50_caffe_fpn_gn_1x_4gpu_CIoU_soft_label_112'
+    'otss_fcos_wo-str_r50_caffe_fpn_gn_1x_4gpu_CIoU_soft_label_soft-weight_112'
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
