@@ -19,7 +19,7 @@ model = dict(
         in_channels=[256, 512, 1024, 2048],
         out_channels=256,
         start_level=1,
-        add_extra_convs=True,
+        add_extra_convs='on_input',
         num_outs=5),
     bbox_head=dict(
         type='RepPointsHead',
@@ -62,6 +62,6 @@ test_cfg = dict(
     nms_pre=1000,
     min_bbox_size=0,
     score_thr=0.05,
-    nms=dict(type='nms', iou_thr=0.5),
+    nms=dict(type='nms', iou_threshold=0.5),
     max_per_img=100)
 optimizer = dict(lr=0.01)

@@ -21,7 +21,7 @@ model = dict(
         out_channels=256,
         start_level=1,
         num_outs=5,
-        add_extra_convs=True),
+        add_extra_convs='on_input'),
     bbox_head=dict(
         type='FoveaHead',
         num_classes=80,
@@ -45,7 +45,7 @@ train_cfg = dict()
 test_cfg = dict(
     nms_pre=1000,
     score_thr=0.05,
-    nms=dict(type='nms', iou_thr=0.5),
+    nms=dict(type='nms', iou_threshold=0.5),
     max_per_img=100)
 data = dict(samples_per_gpu=4, workers_per_gpu=4)
 # optimizer
